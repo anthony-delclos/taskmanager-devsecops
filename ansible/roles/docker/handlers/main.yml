@@ -1,0 +1,16 @@
+---
+# Handler 1 — Nous démarrons le service Docker
+- name: Start docker
+  ansible.builtin.service:
+    name: docker
+    state: started
+
+# Handler 2 — Nous activons le démarrage automatique au boot
+- name: Enable docker
+  ansible.builtin.service:
+    name: docker
+    enabled: true
+
+# Handler 3 — Nous réinitialisons la connexion SSH pour appliquer les nouveaux groupes
+- name: Reload user permissions
+  ansible.builtin.meta: reset_connection

@@ -1,0 +1,6 @@
+---
+- name: Déploiement Docker sur EC2
+  hosts: ec2
+  become: true
+  roles:
+    - docker

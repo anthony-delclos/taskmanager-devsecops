@@ -1,0 +1,65 @@
+---
+# 1. Installation des prérequis système
+- name: Install system prerequisites
+  ansible.builtin.dnf:
+    name:
+      - dnf-plugins-core
+    state: present
+  become: true
+
+
+# 2. Installation de Docker (Amazon Linux 2023 fournit le package docker directement)
+- name: Install Docker
+  ansible.builtin.dnf:
+    name: docker
+    state: present
+  become: true
+  notify: Start docker
+
+
+# 3. Docker Compose
+- name: Download Docker Compose
+  ansible.builtin.get_url:
+    url: "https://github.com/docker/compose/releases/download/v{{ docker_compose_version }}/docker-compose-linux-x86_64"
+    dest: /usr/local/bin/docker-compose
+    mode: '0755'
+  become: true
+
+- name: Make Docker Compose executable
+  ansible.builtin.file:
+    path: /usr/local/bin/docker-compose
+    mode: '0755'
+    state: file
+  become: true
+
+
+# 4. Ajout de l'utilisateur au groupe docker
+- name: Add user to docker group
+  ansible.builtin.user:
+    name: "{{ docker_user }}"
+    groups: docker
+    append: true
+  become: true
+  notify: Reload user permissions
+
+
+# 5. Docker Bench Security (optionnel)
+- name: Run Docker Bench Security
+  ansible.builtin.command: >
+    docker run --rm --net host --pid host --userns host --cap-add audit_control
+    -v /etc:/etc:ro
+    -v /lib/systemd:/lib/systemd:ro
+    -v /usr/bin/containerd:/usr/bin/containerd:ro
+    -v /usr/bin/runc:/usr/bin/runc:ro
+    -v /usr/lib/systemd:/usr/lib/systemd:ro
+    -v /var/lib:/var/lib:ro
+    -v /var/run/docker.sock:/var/run/docker.sock:ro
+    --label docker_bench_security docker/docker-bench-security
+  register: docker_bench_result
+  changed_when: false
+  ignore_errors: true   # Pour que le playbook ne plante pas si Docker Bench échoue
+
+
+- name: Display Docker Bench result
+  ansible.builtin.debug:
+    var: docker_bench_result.stdout
