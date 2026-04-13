@@ -1,6 +1,20 @@
 # Terraform
 .terraform/
+.terraform.lock.hcl
 *.tfstate
 *.tfstate.backup
-.terraform.lock.hcl
-*.exe
+
+# Fichiers sensibles
+terraform.tfvars
+*.tfvars
+!terraform.tfvars.example
+
+# Cles et secrets
+*.pem
+*.key
+credentials.txt
+collab-credentials/
+
+# OS
+.DS_Store
+Thumbs.db

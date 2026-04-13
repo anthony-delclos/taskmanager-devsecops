@@ -1,12 +1,55 @@
-provider "aws" {
-  region  = "eu-west-3"
-  profile = "devesecops_project_final_ajele"
+# ============================================================
+# PROJET FINAL DEVSECOPS - INFRASTRUCTURE AWS
+# Auteur : Gomez (Infrastructure)
+# ============================================================
+
+terraform {
+  required_version = ">= 1.3.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+  }
+
+  backend "s3" {
+    bucket         = "devsecops-tfstate-ajele"
+    key            = "projet-final/terraform.tfstate"
+    region         = "eu-west-3"
+    dynamodb_table = "terraform-lock"
+    encrypt        = true
+    profile        = "devesecops_project_final_ajele"
+  }
 }
 
-# 2. Groupe de sécurité 
+provider "aws" {
+  region  = var.aws_region
+  profile = var.aws_profile
+}
+
+# ============================================================
+# 1. DATA SOURCE - VPC et Subnet par defaut
+# ============================================================
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+# ============================================================
+# 2. SECURITY GROUP
+# Port 22 ferme - acces console exclusivement via SSM
+# ============================================================
 resource "aws_security_group" "web_and_ssh" {
   name        = "web-and-ssh-terraform"
-  description = "HTTP/HTTPS uniquement (Acces console via SSM)"
+  description = "HTTP/HTTPS only - console access via SSM (no SSH)"
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     description = "HTTP"
@@ -25,56 +68,80 @@ resource "aws_security_group" "web_and_ssh" {
   }
 
   egress {
+    description = "All outbound traffic - required for SSM endpoints"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name    = "devsecops-sg"
+    Project = "DevSecOps-Final"
+  }
 }
 
-# 3. CONFIGURATION IAM POUR SSM
-# Création du rôle pour l'instance
+# ============================================================
+# 3. IAM - ROLE EC2 POUR SSM
+# ============================================================
 resource "aws_iam_role" "ssm_role" {
-  name = "devsecops-ssm-role"
+  name        = "devsecops-ssm-role"
+  description = "IAM role for EC2 instance - SSM access"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
+
 }
 
-# Attachement de la politique standard AWS pour SSM
 resource "aws_iam_role_policy_attachment" "ssm_policy" {
   role       = aws_iam_role.ssm_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
-# Création du profil d'instance (ce qui fait le pont entre le rôle et l'EC2)
+
 resource "aws_iam_instance_profile" "ssm_profile" {
   name = "devsecops-ssm-profile"
   role = aws_iam_role.ssm_role.name
 }
 
-# 4. Instance EC2 avec le profil IAM
-resource "aws_instance" "devsecops_project_final_ajele_instance" {
-  ami                  = "ami-00d73b8937cc56758"
-  instance_type        = "t3.micro"
-  
-  # On ajoute cette ligne cruciale :
+# ============================================================
+# 5. INSTANCE EC2
+# ============================================================
+resource "aws_instance" "main" {
+  ami                  = var.ami_id
+  instance_type        = var.instance_type
   iam_instance_profile = aws_iam_instance_profile.ssm_profile.name
 
   vpc_security_group_ids = [aws_security_group.web_and_ssh.id]
+  subnet_id              = data.aws_subnets.default.ids[0]
+
+  user_data = <<-EOF
+    #!/bin/bash
+    set -e
+    systemctl enable amazon-ssm-agent
+    systemctl start amazon-ssm-agent
+    yum update -y --security
+  EOF
 
   root_block_device {
     volume_size = 32
     volume_type = "gp3"
-    encrypted   = true  
+    encrypted   = true
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
   }
 
   tags = {
-    Name = "DevSecOps-TP-SSM"
+    Name    = "DevSecOps-TP-SSM"
+    Project = "DevSecOps-Final"
   }
 }
