@@ -1,5 +1,9 @@
-using TaskManager.API.Entities;
 using Microsoft.EntityFrameworkCore;
+using TaskManager.API.Entities;
+using TaskManager.API.Repositories;
+using TaskManager.API.Repositories.Interfaces;
+using TaskManager.API.Services;
+using TaskManager.API.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,6 +12,12 @@ var connectionString = builder.Configuration.GetConnectionString("Default");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+
+
+// Register repository, service and mapper
+builder.Services.AddScoped<ISubjectRepository, SubjectRepository>();
+builder.Services.AddScoped<ISubjectService, SubjectService>();
+
 
 builder.Services.AddControllers();
 
