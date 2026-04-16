@@ -1,4 +1,4 @@
-﻿namespace COPILmatic_back.API.Enums
+﻿namespace TaskManager.API.Enums
 {
         public enum SubjectPriority
         {

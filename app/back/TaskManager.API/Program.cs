@@ -1,4 +1,4 @@
-using COPILmatic_back.API.Entities;
+using TaskManager.API.Entities;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -6,7 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Connexion MariaDB
 var connectionString = builder.Configuration.GetConnectionString("Default");
 
-builder.Services.AddDbContext<CopilmaticContext>(options =>
+builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 
 builder.Services.AddControllers();
@@ -33,7 +33,7 @@ var app = builder.Build();
 // Migration Automatiques au démarrage
 using (IServiceScope? scope = app.Services.CreateScope())
 {
-    CopilmaticContext? db = scope.ServiceProvider.GetRequiredService<CopilmaticContext>();
+    AppDbContext? db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
 
