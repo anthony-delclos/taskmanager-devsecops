@@ -1,3 +1,8 @@
+aws_iam_policy.ssm_session_restricted: Creating...
+aws_iam_policy.ssm_session_restricted: Creation complete after 1s [id=arn:aws:iam::418295718544:policy/devsecops-ssm-session-restricted]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
 Outputs:
 
 ecr_repository_name = "taskmanager"
@@ -6,4 +11,29 @@ instance_id = "i-04505dbb91806e12a"
 instance_private_ip = "172.31.41.224"
 security_group_id = "sg-0dc679e5c4997802d"
 ssm_connect_command = "aws ssm start-session --target i-04505dbb91806e12a --region eu-west-3 --profile <your-sso-profile>"
-root@joyboy-Nitro-ANV15-41:/home/joyboy/BACHELOR_CYBER_2025/DEVSECOPS/taskmanager-devsecops/terraform# 
+ssm_restricted_policy_arn = "arn:aws:iam::418295718544:policy/devsecops-ssm-session-restricted"
+ssm_session_log_group = "/aws/ssm/devsecops-sessions"
+
+
+A faire pour tous : 
+La policy est créée : arn:aws:iam::418295718544:policy/devsecops-ssm-session-restricted
+
+Ce qu'il reste à faire : attacher la policy aux collaborateurs
+
+Via AWS CLI (avec le profil AdministratorAccess) — il faut d'abord trouver les noms des Permission Sets SSO des collaborateurs :
+
+
+# Lister les instances SSO
+aws sso-admin list-instances --profile devesecops_project_final_ajele
+
+# Lister les permission sets (remplace <instance-arn> par le résultat ci-dessus)
+aws sso-admin list-permission-sets \
+  --instance-arn <instance-arn> \
+  --profile devesecops_project_final_ajele
+
+
+Ou plus simplement depuis la console AWS :
+
+IAM Identity Center → Permission sets → trouver le permission set des collaborateurs (probablement PowerUserAccess)
+Cliquer dessus → Customer managed policies → Attach → coller devsecops-ssm-session-restricted
+Répéter pour chaque collaborateur (ou si c'est le même permission set partagé, une seule fois suffit)
