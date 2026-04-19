@@ -27,3 +27,13 @@ output "ecr_repository_name" {
   description = "Nom du repository ECR"
   value       = aws_ecr_repository.taskmanager.name
 }
+
+output "ssm_session_log_group" {
+  description = "Groupe CloudWatch où toutes les sessions SSM sont journalisées"
+  value       = aws_cloudwatch_log_group.ssm_sessions.name
+}
+
+output "ssm_restricted_policy_arn" {
+  description = "ARN de la policy IAM à attacher aux rôles SSO des collaborateurs (Erwin, Leo, Anthony, Esteban)"
+  value       = aws_iam_policy.ssm_session_restricted.arn
+}

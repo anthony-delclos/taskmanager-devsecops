@@ -35,11 +35,15 @@ provider "aws" {
 }
 
 # ============================================================
-# 1. DATA SOURCE - VPC et Subnet par defaut
+# 1. DATA SOURCES
 # ============================================================
 data "aws_vpc" "default" {
   default = true
 }
+
+# Récupère l'account ID AWS courant dynamiquement.
+# Utilisé pour construire les ARNs des ressources sans valeur en dur.
+data "aws_caller_identity" "current" {}
 
 data "aws_subnets" "default" {
   filter {
@@ -220,6 +224,113 @@ resource "aws_instance" "main" {
 
   tags = {
     Name    = "DevSecOps-TP-SSM"
+    Project = "DevSecOps-Final"
+  }
+}
+
+# ============================================================
+# 6. SSM — CONTRÔLE D'ACCÈS ET JOURNALISATION
+#
+# Deux mécanismes complémentaires :
+#   A. aws_ssm_document  → journalisation obligatoire de toutes
+#      les sessions (contrôle compensatoire, toujours applicable)
+#   B. aws_iam_policy    → restreint ssm:StartSession à cette
+#      instance uniquement (nécessite iam:CreatePolicy — peut
+#      échouer avec PowerUserAccess SSO, voir commentaire)
+# ============================================================
+
+# ------------------------------------------------------------------
+# A. JOURNALISATION DES SESSIONS SSM
+#    Le document "SSM-SessionManagerRunShell" est le document par
+#    défaut utilisé par Session Manager sur toutes les instances
+#    du compte. Le surcharger force la journalisation CloudWatch
+#    sur chaque connexion, quelle que soit l'identité du connecteur.
+# ------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "ssm_sessions" {
+  name              = "/aws/ssm/devsecops-sessions"
+  retention_in_days = 90
+
+  tags = {
+    Name    = "devsecops-ssm-session-logs"
+    Project = "DevSecOps-Final"
+  }
+}
+
+resource "aws_ssm_document" "session_preferences" {
+  name          = "SSM-SessionManagerRunShell"
+  document_type = "Session"
+
+  content = jsonencode({
+    schemaVersion = "1.0"
+    description   = "Session Manager preferences — journalisation CloudWatch obligatoire pour toutes les sessions"
+    sessionType   = "Standard_Stream"
+    inputs = {
+      cloudWatchLogGroupName      = aws_cloudwatch_log_group.ssm_sessions.name
+      cloudWatchEncryptionEnabled = false
+      cloudWatchStreamingEnabled  = true
+      idleSessionTimeout          = "20"
+      runAsEnabled                = false
+      shellProfile = {
+        linux = ""
+      }
+    }
+  })
+
+  tags = {
+    Name    = "devsecops-session-prefs"
+    Project = "DevSecOps-Final"
+  }
+}
+
+# ------------------------------------------------------------------
+# B. RESTRICTION ssm:StartSession À CETTE INSTANCE UNIQUEMENT
+#
+#    Requiert iam:CreatePolicy — disponible depuis le passage du profil
+#    SSO de PowerUserAccess → AdministratorAccess.
+#
+#    À attacher manuellement aux rôles SSO des collaborateurs
+#    (Erwin, Leo, Anthony, Esteban) après terraform apply.
+# ------------------------------------------------------------------
+
+resource "aws_iam_policy" "ssm_session_restricted" {
+  name        = "devsecops-ssm-session-restricted"
+  description = "Restreint ssm:StartSession à l'instance du projet DevSecOps uniquement"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowSSMSessionOnProjectInstance"
+        Effect = "Allow"
+        Action = [
+          "ssm:StartSession",
+          "ssm:TerminateSession",
+          "ssm:ResumeSession",
+          "ssm:DescribeSessions",
+          "ssm:GetConnectionStatus"
+        ]
+        Resource = [
+          "arn:aws:ec2:eu-west-3:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.main.id}",
+          "arn:aws:ssm:eu-west-3::document/SSM-SessionManagerRunShell"
+        ]
+      },
+      {
+        Sid      = "DenySSMSessionOnOtherInstances"
+        Effect   = "Deny"
+        Action   = "ssm:StartSession"
+        Resource = "arn:aws:ec2:*:*:instance/*"
+        Condition = {
+          StringNotEquals = {
+            "aws:ResourceTag/Project" = "DevSecOps-Final"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name    = "devsecops-ssm-restricted"
     Project = "DevSecOps-Final"
   }
 }
