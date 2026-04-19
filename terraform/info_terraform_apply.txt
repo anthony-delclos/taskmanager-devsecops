@@ -1,6 +1,9 @@
 Outputs:
 
+ecr_repository_name = "taskmanager"
+ecr_repository_url = "418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
 instance_id = "i-04505dbb91806e12a"
 instance_private_ip = "172.31.41.224"
 security_group_id = "sg-0dc679e5c4997802d"
 ssm_connect_command = "aws ssm start-session --target i-04505dbb91806e12a --region eu-west-3 --profile <your-sso-profile>"
+root@joyboy-Nitro-ANV15-41:/home/joyboy/BACHELOR_CYBER_2025/DEVSECOPS/taskmanager-devsecops/terraform# 

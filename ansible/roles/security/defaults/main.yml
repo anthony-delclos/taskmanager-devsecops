@@ -1,0 +1,59 @@
+# ============================================================
+# DEFAULTS — RÔLE SECURITY
+# Variables par défaut pour le durcissement système.
+# Peuvent être surchargées via group_vars ou extra-vars.
+# ============================================================
+---
+
+# ------------------------------------------------------------------
+# MISE À JOUR SYSTÈME
+# ------------------------------------------------------------------
+
+# Applique uniquement les mises à jour de sécurité (recommandé en prod)
+# Mettre à "true" pour appliquer TOUTES les mises à jour
+security_update_all_packages: false
+
+# ------------------------------------------------------------------
+# FAIL2BAN
+# ------------------------------------------------------------------
+
+# Active l'installation et la configuration de fail2ban
+security_install_fail2ban: true
+
+# Nombre de tentatives avant bannissement IP
+security_fail2ban_maxretry: 5
+
+# Durée du bannissement en secondes (10 minutes par défaut)
+security_fail2ban_bantime: 600
+
+# Fenêtre de détection des tentatives (secondes)
+security_fail2ban_findtime: 600
+
+# ------------------------------------------------------------------
+# DURCISSEMENT SSH
+# ------------------------------------------------------------------
+
+# Désactive la connexion SSH root (bonne pratique même si port 22
+# est fermé au niveau du Security Group AWS)
+security_ssh_permit_root_login: "no"
+
+# Désactive l'authentification par mot de passe SSH
+security_ssh_password_auth: "no"
+
+# ------------------------------------------------------------------
+# AUDITD — JOURNALISATION DES ÉVÉNEMENTS SYSTÈME
+# ------------------------------------------------------------------
+
+# Active l'installation et l'activation d'auditd
+security_install_auditd: true
+
+# ------------------------------------------------------------------
+# SELINUX
+# ------------------------------------------------------------------
+
+# Mode cible pour SELinux : "enforcing", "permissive" ou "disabled"
+# ATTENTION : passer à "enforcing" nécessite un reboot de l'instance
+# et peut bloquer des services si les politiques ne sont pas en place.
+# Valeur recommandée pour ce projet académique : "enforcing"
+# TODO : valider que Docker fonctionne en mode enforcing sur AL2023
+security_selinux_state: "enforcing"

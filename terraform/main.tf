@@ -4,7 +4,8 @@
 # ============================================================
 
 terraform {
-  required_version = ">= 1.3.0"
+  # use_lockfile (natif S3) requiert >= 1.10 — on aligne la contrainte
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -14,12 +15,17 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "devsecops-tfstate-ajele"
-    key            = "projet-final/terraform.tfstate"
-    region         = "eu-west-3"
-    dynamodb_table = "terraform-lock"
-    encrypt        = true
-    profile        = "devesecops_project_final_ajele"
+    bucket  = "devsecops-tfstate-ajele"
+    key     = "projet-final/terraform.tfstate"
+    region  = "eu-west-3"
+    encrypt = true
+    profile = "devesecops_project_final_ajele"
+
+    # Remplace dynamodb_table (déprécié depuis Terraform 1.10).
+    # Utilise un fichier .tflock dans S3 au lieu d'une table DynamoDB.
+    # La table "terraform-lock" peut être supprimée si elle n'est
+    # plus utilisée par d'autres projets.
+    use_lockfile = true
   }
 }
 
@@ -104,9 +110,81 @@ resource "aws_iam_role_policy_attachment" "ssm_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# Permet à l'instance EC2 de puller les images depuis ECR
+resource "aws_iam_role_policy_attachment" "ecr_policy" {
+  role       = aws_iam_role.ssm_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# Managed policy S3 restreinte au préfixe ansible-ssm-tmp/.
+# Utilise aws_iam_policy (managed) + aws_iam_role_policy_attachment
+# car iam:PutRolePolicy (inline) est bloqué par PowerUserAccess SSO,
+# alors que iam:CreatePolicy + iam:AttachRolePolicy sont autorisés.
+# Policy S3 pour le plugin community.aws.aws_ssm d'Ansible.
+# Le plugin nécessite s3:PutObject + s3:GetObject pour transférer
+# les fichiers temporaires entre le nœud de contrôle et l'instance.
+#
+# Contrainte : le profil SSO PowerUserAccess ne permet ni
+# iam:CreatePolicy ni iam:PutRolePolicy — seul iam:AttachRolePolicy
+# sur des policies AWS managées existantes est autorisé.
+# AmazonS3FullAccess est la seule policy managée AWS disponible
+# couvrant le besoin read+write S3.
+#
+# En production : remplacer par une policy inline créée par un admin
+# avec droits IAM, restreinte au bucket devsecops-tfstate-ajele/ansible-ssm-tmp/*
+resource "aws_iam_role_policy_attachment" "s3_ssm_ansible" {
+  role       = aws_iam_role.ssm_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
 resource "aws_iam_instance_profile" "ssm_profile" {
   name = "devsecops-ssm-profile"
   role = aws_iam_role.ssm_role.name
+}
+
+# ============================================================
+# 4. ECR — ELASTIC CONTAINER REGISTRY
+# Stocke les images Docker de l'application taskmanager.
+# L'instance EC2 pull depuis ce registre via la policy ECR ci-dessous.
+# ============================================================
+resource "aws_ecr_repository" "taskmanager" {
+  name                 = "taskmanager"
+  image_tag_mutability = "MUTABLE"
+
+  # Scan automatique des vulnérabilités CVE à chaque push d'image
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  # Chiffrement des images au repos avec la clé AWS managée
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  tags = {
+    Name    = "taskmanager-ecr"
+    Project = "DevSecOps-Final"
+  }
+}
+
+# Politique de cycle de vie : supprime les images non-taguées
+# après 14 jours pour limiter les coûts de stockage ECR
+resource "aws_ecr_lifecycle_policy" "taskmanager" {
+  repository = aws_ecr_repository.taskmanager.name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Expire untagged images after 14 days"
+      selection = {
+        tagStatus   = "untagged"
+        countType   = "sinceImagePushed"
+        countUnit   = "days"
+        countNumber = 14
+      }
+      action = { type = "expire" }
+    }]
+  })
 }
 
 # ============================================================
@@ -125,7 +203,7 @@ resource "aws_instance" "main" {
     set -e
     systemctl enable amazon-ssm-agent
     systemctl start amazon-ssm-agent
-    yum update -y --security
+    dnf update -y --security
   EOF
 
   root_block_device {

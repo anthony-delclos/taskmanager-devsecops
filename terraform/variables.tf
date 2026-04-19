@@ -15,7 +15,7 @@ variable "aws_profile" {
 }
 
 variable "ami_id" {
-  description = "AMI Amazon Linux 2 — eu-west-3"
+  description = "AMI Amazon Linux 2023 — eu-west-3"
   type        = string
   default     = "ami-00d73b8937cc56758"
 }

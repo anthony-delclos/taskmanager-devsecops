@@ -1,16 +1,30 @@
+# ============================================================
+# HANDLERS — RÔLE DOCKER
+#
+# Les handlers ne s'exécutent qu'une seule fois en fin de play,
+# uniquement si la tâche notifiante a produit un changement.
+# ============================================================
 ---
-# Handler 1 — Nous démarrons le service Docker
-- name: Start docker
+
+# Handler fusionné : démarre ET active Docker au boot en une seule tâche.
+# Correctif : l'ancienne version avait deux handlers séparés ("Start docker"
+# + "Enable docker") mais "Enable docker" n'était jamais notifié depuis les
+# tasks → Docker n'était donc pas activé au démarrage de l'instance.
+- name: Start and enable docker
   ansible.builtin.service:
     name: docker
     state: started
-
-# Handler 2 — Nous activons le démarrage automatique au boot
-- name: Enable docker
-  ansible.builtin.service:
-    name: docker
     enabled: true
 
-# Handler 3 — Nous réinitialisons la connexion SSH pour appliquer les nouveaux groupes
+# Redémarre Docker après modification de daemon.json.
+# state: restarted démarre le service s'il n'est pas encore lancé.
+- name: Restart docker
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+    enabled: true
+
+# Réinitialise la connexion pour que l'ajout du groupe docker
+# soit pris en compte immédiatement sans redémarrer l'instance.
 - name: Reload user permissions
   ansible.builtin.meta: reset_connection
