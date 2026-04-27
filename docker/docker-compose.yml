@@ -1,0 +1,50 @@
+services:
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: taskmanager
+      MARIADB_USER: taskmanager
+      MARIADB_PASSWORD: taskmanagerpass
+      MARIADB_ROOT_PASSWORD: rootpass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  back:
+    build:
+      context: ./app/back
+      dockerfile: Dockerfile
+    image: taskmanager-devsecops-back
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      ConnectionStrings__Default: Server=db;Port=3306;Database=taskmanager;User=taskmanager;Password=taskmanagerpass;
+      Cors__AllowedOrigins: http://localhost:8080,http://127.0.0.1:8080
+    ports:
+      - "5000:5000"
+
+  front:
+    build:
+      context: ./app/front
+      dockerfile: Dockerfile
+    image: taskmanager-devsecops-front
+    restart: unless-stopped
+    depends_on:
+      - back
+    ports:
+      - "8080:80"
+
+volumes:
+  mariadb_data:
