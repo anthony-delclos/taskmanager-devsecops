@@ -933,3 +933,10 @@ terraform.rc
 # Additional files built by Visual Studio
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudio,visualstudiocode,csharp,dotnetcore,aspnetcore,terraform,ansible,angular,node
+
+# webapi config
+appsettings.Development.json
+
+# Docker
+*.tar          # images exportées
+.docker/       # config locale Docker
