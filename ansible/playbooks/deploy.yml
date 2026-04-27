@@ -1,0 +1,49 @@
+# ============================================================
+# PLAYBOOK PRINCIPAL — PROJET DEVSECOPS
+#
+# Exécution complète :
+#   ansible-playbook playbooks/deploy.yml \
+#     --vault-password-file ~/.vault_pass
+#
+# Exécution par tag (rôle spécifique uniquement) :
+#   ansible-playbook playbooks/deploy.yml --tags security
+#   ansible-playbook playbooks/deploy.yml --tags docker
+#
+# Dry-run (sans modification) :
+#   ansible-playbook playbooks/deploy.yml --check --diff
+# ============================================================
+---
+
+- name: Déploiement sécurisé de l'infrastructure applicative sur EC2
+  hosts: ec2
+  # become: true appliqué globalement — les rôles n'ont pas besoin
+  # de le répéter sur chaque tâche individuellement
+  become: true
+
+  # Variables supplémentaires non sensibles (les variables sensibles
+  # sont dans inventory/group_vars/vault.yml, chiffré avec Ansible Vault)
+  vars:
+    # Confirme la région pour les commandes AWS CLI dans les tâches
+    aws_region: "eu-west-3"
+
+  roles:
+    # ----------------------------------------------------------
+    # RÔLE 1 : SECURITY
+    # Durcissement système AVANT toute installation applicative :
+    # màj sécurité, fail2ban, SSH hardening, auditd, SELinux.
+    # Doit toujours s'exécuter en premier pour garantir un socle sain.
+    # ----------------------------------------------------------
+    - role: security
+      tags:
+        - security
+        - hardening
+
+    # ----------------------------------------------------------
+    # RÔLE 2 : DOCKER
+    # Installation de Docker et Docker Compose, ajout au groupe,
+    # login ECR, audit Docker Bench Security.
+    # ----------------------------------------------------------
+    - role: docker
+      tags:
+        - docker
+        - containers

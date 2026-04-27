@@ -1,0 +1,19 @@
+# ============================================================
+# HANDLERS — RÔLE SECURITY
+# ============================================================
+---
+
+- name: Restart sshd
+  ansible.builtin.service:
+    name: sshd
+    state: restarted
+
+- name: Restart fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
+
+# augenrules recharge les règles d'audit sans redémarrer le service
+- name: Reload auditd rules
+  ansible.builtin.command: augenrules --load
+  changed_when: true

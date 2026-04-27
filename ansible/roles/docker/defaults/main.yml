@@ -1,0 +1,51 @@
+# ============================================================
+# DEFAULTS — RÔLE DOCKER
+# Variables par défaut. Peuvent être surchargées via group_vars,
+# host_vars ou --extra-vars lors de l'appel au playbook.
+# ============================================================
+---
+
+# ------------------------------------------------------------------
+# DOCKER COMPOSE
+# ------------------------------------------------------------------
+
+# Version du binaire Docker Compose à télécharger depuis GitHub.
+# Vérifier les releases disponibles :
+# https://github.com/docker/compose/releases
+docker_compose_version: "2.27.0"
+
+# ------------------------------------------------------------------
+# UTILISATEUR DOCKER
+# ------------------------------------------------------------------
+
+# Utilisateur système ajouté au groupe docker (accès sans sudo).
+# Sur Amazon Linux 2023, l'utilisateur par défaut est ec2-user.
+docker_user: "ec2-user"
+
+# ------------------------------------------------------------------
+# AWS / ECR
+# ------------------------------------------------------------------
+
+# Région AWS — doit correspondre à la région Terraform (eu-west-3)
+aws_region: "eu-west-3"
+
+# URL du registre ECR utilisée pour le docker login et le docker pull.
+# Format : <account_id>.dkr.ecr.<region>.amazonaws.com/<repo_name>
+#
+# TODO : remplacer par la vraie valeur une fois le repo ECR créé.
+# Deux options :
+#   1. Créer le repo ECR dans terraform/main.tf avec resource "aws_ecr_repository"
+#      puis récupérer l'URL via : terraform output ecr_repository_url
+#   2. Passer la valeur en extra-var lors du run :
+#      ansible-playbook deploy.yml -e "ecr_registry_url=123456789.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
+# URL issue de : terraform output ecr_repository_url
+ecr_registry_url: "418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
+
+# ------------------------------------------------------------------
+# DOCKER CONTENT TRUST
+# ------------------------------------------------------------------
+
+# Active la vérification des signatures d'images Docker (DCT).
+# 0 = désactivé (défaut pour simplifier le développement)
+# 1 = activé (recommandé en production)
+docker_content_trust: "0"

@@ -112,7 +112,7 @@ Section E - Container Images and Build Files
 Score: 16 checks PASS / 4 WARN / 3 NOTE
 ```
 
-> Les avertissements (WARN) sont documentés et acceptés dans le cadre de ce TP.
+> Les avertissements (WARN) sont documentés et acceptés dans le cadre de notre TP.
 
 ## Problèmes rencontrés et solutions
 

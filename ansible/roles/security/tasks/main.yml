@@ -1,0 +1,168 @@
+# ============================================================
+# TASKS — RÔLE SECURITY
+# OS cible : Amazon Linux 2023 (gestionnaire de paquets : dnf)
+#
+# Ce rôle applique le durcissement de base de l'instance EC2 :
+#   1. Mise à jour des paquets (sécurité ou complète)
+#   2. Installation et configuration de fail2ban
+#   3. Durcissement SSH (PermitRootLogin, PasswordAuthentication)
+#   4. Installation et activation d'auditd
+#   5. Vérification / application du mode SELinux
+#
+# Ce rôle s'exécute EN PREMIER dans deploy.yml, avant le rôle docker,
+# pour garantir un socle sécurisé avant tout déploiement applicatif.
+# ============================================================
+---
+
+# ------------------------------------------------------------------
+# 1. MISE À JOUR SYSTÈME
+# ------------------------------------------------------------------
+
+- name: Apply security package updates
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    security: "{{ not security_update_all_packages }}"
+  # Peut prendre plusieurs minutes sur une instance fraîche
+
+# ------------------------------------------------------------------
+# 2. FAIL2BAN
+#    Sur Amazon Linux 2023, fail2ban n'est pas dans les dépôts
+#    officiels (EPEL non supporté nativement sur AL2023).
+#    On utilise un bloc block/rescue : si l'installation échoue,
+#    le play continue et un message d'avertissement est affiché.
+# ------------------------------------------------------------------
+
+- name: Install and configure fail2ban
+  when: security_install_fail2ban
+  block:
+    - name: Install fail2ban (via dnf)
+      ansible.builtin.dnf:
+        name: fail2ban
+        state: present
+
+    - name: Configure fail2ban jail (SSH protection)
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.d/sshd.conf
+        mode: "0644"
+        content: |
+          # Protection SSH — actif même si port 22 fermé au SG
+          # (défense en profondeur si le SG est accidentellement rouvert)
+          [sshd]
+          enabled  = true
+          port     = ssh
+          maxretry = {{ security_fail2ban_maxretry }}
+          bantime  = {{ security_fail2ban_bantime }}
+          findtime = {{ security_fail2ban_findtime }}
+      notify: Restart fail2ban
+
+    - name: Enable and start fail2ban
+      ansible.builtin.service:
+        name: fail2ban
+        state: started
+        enabled: true
+
+  rescue:
+    # fail2ban absent des dépôts AL2023 — non bloquant pour le déploiement
+    - name: Warn that fail2ban is unavailable on Amazon Linux 2023
+      ansible.builtin.debug:
+        msg: >
+          fail2ban non disponible sur Amazon Linux 2023 (EPEL non supporté).
+          Le durcissement SSH et auditd restent actifs.
+          Alternative manuelle : installer depuis les sources ou via pip.
+
+# ------------------------------------------------------------------
+# 3. DURCISSEMENT SSH
+#    Le port 22 est fermé au niveau du Security Group AWS (Terraform),
+#    mais le service SSH tourne toujours sur l'instance. Ces directives
+#    empêchent toute connexion root ou par mot de passe si le SG était
+#    accidentellement rouvert.
+# ------------------------------------------------------------------
+
+- name: Disable SSH root login
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitRootLogin"
+    line: "PermitRootLogin {{ security_ssh_permit_root_login }}"
+    state: present
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: Disable SSH password authentication
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PasswordAuthentication"
+    line: "PasswordAuthentication {{ security_ssh_password_auth }}"
+    state: present
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+# ------------------------------------------------------------------
+# 4. AUDITD — JOURNALISATION DES APPELS SYSTÈME
+#    Enregistre les événements sensibles : connexions, modifications
+#    de fichiers système, changements de privilèges, etc.
+#    Complémentaire à CloudTrail (niveau AWS) et SSM Session Manager.
+# ------------------------------------------------------------------
+
+- name: Install auditd
+  ansible.builtin.dnf:
+    name: audit
+    state: present
+  when: security_install_auditd
+
+- name: Enable and start auditd
+  ansible.builtin.service:
+    name: auditd
+    state: started
+    enabled: true
+  when: security_install_auditd
+
+- name: Add audit rules for sensitive paths
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/devsecops.rules
+    mode: "0640"
+    content: |
+      # Règles d'audit DevSecOps — surveillances des fichiers critiques
+      -w /etc/passwd -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/sudoers -p wa -k privilege_escalation
+      -w /var/log/auth.log -p wa -k authentication
+      -w /usr/bin/docker -p x -k docker_exec
+      -w /var/lib/docker -p rwxa -k docker_daemon
+      -w /etc/docker -p rwxa -k docker_daemon
+      -w /etc/docker/daemon.json -p rwxa -k docker_daemon
+      -a always,exit -F arch=b64 -S execve -k exec_commands
+  when: security_install_auditd
+  notify: Reload auditd rules
+
+# ------------------------------------------------------------------
+# 5. SELINUX
+#    Sur Amazon Linux 2023, SELinux est présent mais souvent en mode
+#    permissive par défaut. Ce bloc le passe en "enforcing".
+#    ATTENTION : un reboot est nécessaire si le mode change.
+#    Le module ansible.posix.selinux gère cela automatiquement.
+# ------------------------------------------------------------------
+
+- name: Install SELinux Python bindings
+  ansible.builtin.dnf:
+    name:
+      - python3-libselinux
+      - libselinux-utils
+    state: present
+
+- name: Set SELinux to enforcing mode
+  ansible.posix.selinux:
+    policy: targeted
+    state: "{{ security_selinux_state }}"
+  # Un reboot peut être requis si on passe de disabled → enforcing.
+  # Le module le signalera via ansible_reboot_required.
+  register: selinux_result
+
+- name: Warn if reboot is required after SELinux change
+  ansible.builtin.debug:
+    msg: >
+      SELinux mode changed — un reboot de l'instance est nécessaire
+      pour appliquer le mode '{{ security_selinux_state }}' complètement.
+      Commande : aws ssm start-session --target i-04505dbb91806e12a
+      puis : sudo reboot
+  when: selinux_result.reboot_required | default(false)

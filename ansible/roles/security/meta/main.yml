@@ -1,0 +1,15 @@
+# ============================================================
+# META — RÔLE SECURITY
+# ============================================================
+---
+galaxy_info:
+  role_name: security
+  author: DevSecOps-Team
+  description: "Durcissement système de base pour Amazon Linux 2023 sur EC2"
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Amazon
+      versions:
+        - "2023"
+
+dependencies: []
