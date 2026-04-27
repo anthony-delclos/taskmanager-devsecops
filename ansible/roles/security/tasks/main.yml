@@ -130,6 +130,7 @@
       -w /usr/bin/docker -p x -k docker_exec
       -w /var/lib/docker -p rwxa -k docker_daemon
       -w /etc/docker -p rwxa -k docker_daemon
+      -w /etc/docker/daemon.json -p rwxa -k docker_daemon
       -a always,exit -F arch=b64 -S execve -k exec_commands
   when: security_install_auditd
   notify: Reload auditd rules
