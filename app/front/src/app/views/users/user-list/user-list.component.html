@@ -1,0 +1,55 @@
+<div class="page">
+  <div class="page-header">
+    <h2>Utilisateurs</h2>
+    <a routerLink="/users/new" class="btn">+ Nouvel utilisateur</a>
+  </div>
+
+  @if (vm.loading()) {
+    <p class="info">Chargement...</p>
+  }
+
+  @if (vm.error()) {
+    <p class="error">{{ vm.error() }}</p>
+  }
+
+  @if (!vm.loading() && !vm.error() && vm.users().length === 0) {
+    <p class="info">Aucun utilisateur enregistré.</p>
+  }
+
+  @if (vm.users().length > 0) {
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Nom d'utilisateur</th>
+          <th>Email</th>
+          <th>Rôle</th>
+          <th>Statut</th>
+          <th>Créé le</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (user of vm.users(); track user.id) {
+          <tr>
+            <td>{{ user.username }}</td>
+            <td>{{ user.email }}</td>
+            <td>
+              <span [class]="user.isAdmin ? 'badge badge-admin' : 'badge'">
+                {{ user.isAdmin ? 'Admin' : 'Utilisateur' }}
+              </span>
+            </td>
+            <td>{{ user.status ?? '—' }}</td>
+            <td>{{ user.creationDate | date:'dd/MM/yyyy' }}</td>
+            <td class="actions">
+              <a [routerLink]="['/users', user.id, 'edit']" class="btn btn-sm">Modifier</a>
+              <button (click)="delete(user.id)" class="btn btn-sm btn-danger">Supprimer</button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    <p class="info-footer">
+      {{ vm.adminCount() }} administrateur(s) · {{ vm.users().length }} utilisateur(s) au total
+    </p>
+  }
+</div>

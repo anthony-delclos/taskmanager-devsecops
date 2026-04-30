@@ -3,14 +3,28 @@ services:
     image: mariadb:11.4
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: taskmanager
-      MARIADB_USER: taskmanager
-      MARIADB_PASSWORD: taskmanagerpass
-      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
     ports:
       - "3306:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -20,7 +34,7 @@ services:
 
   back:
     build:
-      context: ./app/back
+      context: ../app/back
       dockerfile: Dockerfile
     image: taskmanager-devsecops-back
     restart: unless-stopped
@@ -30,21 +44,56 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:5000
-      ConnectionStrings__Default: Server=db;Port=3306;Database=taskmanager;User=taskmanager;Password=taskmanagerpass;
-      Cors__AllowedOrigins: http://localhost:8080,http://127.0.0.1:8080
+      ConnectionStrings__Default: Server=db;Port=3306;Database=${DB_NAME};User=${DB_USER};Password=${DB_PASSWORD};
+      Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS}
     ports:
       - "5000:5000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   front:
     build:
-      context: ./app/front
+      context: ../app/front
       dockerfile: Dockerfile
     image: taskmanager-devsecops-front
     restart: unless-stopped
     depends_on:
       - back
     ports:
-      - "8080:80"
+      - "8080:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.25"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   mariadb_data:
