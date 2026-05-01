@@ -8,6 +8,16 @@ output "instance_private_ip" {
   value       = aws_instance.main.private_ip
 }
 
+output "instance_public_ip" {
+  description = "Public IP of the instance — use this for sslip.io: replace dots with dashes (e.g. 1-2-3-4.sslip.io)"
+  value       = aws_instance.main.public_ip
+}
+
+output "sslip_domain" {
+  description = "Domaine sslip.io prêt à l'emploi pour le .env DOMAIN="
+  value       = "${replace(aws_instance.main.public_ip, ".", "-")}.sslip.io"
+}
+
 output "ssm_connect_command" {
   description = "Command to share with collaborators to connect"
   value       = "aws ssm start-session --target ${aws_instance.main.id} --region ${var.aws_region} --profile <your-sso-profile>"

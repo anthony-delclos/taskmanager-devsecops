@@ -1,4 +1,31 @@
 services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "letsencrypt:/letsencrypt"
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.25"
+
   db:
     image: mariadb:11.4
     restart: unless-stopped
@@ -7,8 +34,6 @@ services:
       MARIADB_USER: ${DB_USER}
       MARIADB_PASSWORD: ${DB_PASSWORD}
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-    ports:
-      - "3306:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
     security_opt:
@@ -42,12 +67,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5000
       ConnectionStrings__Default: Server=db;Port=3306;Database=${DB_NAME};User=${DB_USER};Password=${DB_PASSWORD};
-      Cors__AllowedOrigins: ${CORS_ALLOWED_ORIGINS}
-    ports:
-      - "5000:5000"
+      Cors__AllowedOrigins: https://${DOMAIN}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -74,8 +97,6 @@ services:
     restart: unless-stopped
     depends_on:
       - back
-    ports:
-      - "8080:8080"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -94,6 +115,17 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.front.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.front.entrypoints=websecure"
+      - "traefik.http.routers.front.tls.certresolver=letsencrypt"
+      - "traefik.http.services.front.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.hsts.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.hsts.headers.stsPreload=true"
+      - "traefik.http.routers.front.middlewares=hsts"
 
 volumes:
   mariadb_data:
+  letsencrypt:
