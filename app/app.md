@@ -8,7 +8,7 @@
 | Architecture      | Full-stack : Backend .NET 8 + Frontend Angular 21 |
 | Base de données   | MariaDB 11.4                                      |
 | Conteneurisation  | Docker + Docker Compose                           |
-| Date de rédaction | Avril 2026                                        |
+| Date de rédaction | Mai 2026 (mis à jour)                             |
 
 ---
 
@@ -25,7 +25,9 @@
 9. [Tests — Backend et Frontend](#9-tests--backend-et-frontend)
 10. [Docker — Hardening et sécurité](#10-docker--hardening-et-sécurité)
 11. [Configuration et variables d'environnement](#11-configuration-et-variables-denvironnement)
-12. [Ce qui a été fait](#12-ce-qui-a-été-fait)
+12. [Déploiement public HTTPS — AWS EC2 + Traefik](#12-déploiement-public-https--aws-ec2--traefik)
+13. [Audit de sécurité — Vérifications post-déploiement](#13-audit-de-sécurité--vérifications-post-déploiement)
+14. [Ce qui a été fait](#14-ce-qui-a-été-fait)
 
 ---
 
@@ -51,6 +53,8 @@ L'application **TaskManager** est une solution full-stack de gestion des utilisa
 | Tests Backend    | xUnit + Moq + FluentAssertions | -       |
 | Tests Frontend   | Vitest                         | 4.0.8   |
 | Conteneurisation | Docker + Docker Compose        | -       |
+| Reverse proxy    | Traefik                        | v3.3    |
+| Infra cloud      | AWS EC2 + Terraform + Ansible  | -       |
 
 ---
 
@@ -59,19 +63,35 @@ L'application **TaskManager** est une solution full-stack de gestion des utilisa
 ### Architecture en couches
 
 ```
-┌─────────────────┐    HTTP/HTTPS    ┌─────────────────┐
-│   Frontend      │◄────────────────►│     Backend     │
-│   Angular 21    │                  │   .NET 8 API    │
-│   (Port 8080)   │                  │   (Port 5000)   │
-└─────────────────┘                  └─────────────────┘
-         │                                   │
-         └───────────────────────────────────┼─────────────────┐
-                                             ▼                 │
-                                   ┌─────────────────┐         │
-                                   │    MariaDB      │◄────────┘
-                                   │   (Port 3306)   │
-                                   └─────────────────┘
+                        Internet (HTTPS 443)
+                               │
+                    ┌──────────▼──────────┐
+                    │       Traefik       │  ← TLS termination
+                    │      v3.3           │    Let's Encrypt
+                    │  (ports 80/443)     │    HSTS middleware
+                    └──────────┬──────────┘
+                               │ réseau Docker interne
+              ┌────────────────┴────────────────┐
+              ▼                                 │
+   ┌──────────────────┐                         │
+   │    Frontend      │  /api/* → http://back:5000
+   │    Angular 21    │─────────────────────────►│
+   │   (port 8080)    │                         ▼
+   └──────────────────┘              ┌──────────────────┐
+                                     │    Backend       │
+                                     │   .NET 8 API     │
+                                     │  (port 5000)     │
+                                     └────────┬─────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────┐
+                                   │    MariaDB       │
+                                   │   (port 3306)    │
+                                   └──────────────────┘
 ```
+
+> Aucun port interne (3306, 5000, 8080) n'est exposé sur l'hôte.
+> Seuls les ports 80 et 443 de Traefik sont accessibles depuis l'extérieur.
 
 ### Flux de données
 
@@ -158,11 +178,35 @@ cd docker
 docker compose up --build
 ```
 
-### Accès aux services
+### Accès aux services (développement local)
 
 - **Frontend** : http://localhost:8080
 - **Backend API** : http://localhost:5000 (accessible uniquement en dev)
 - **Base de données** : localhost:3306 (non exposé publiquement)
+
+### Déploiement production (AWS EC2)
+
+```bash
+# Se connecter à l'instance via SSM (pas de SSH)
+aws ssm start-session --target <instance-id> --region eu-west-3 --profile <sso-profile>
+
+# Cloner le repo et basculer sur develop
+git clone <repository-url>
+cd taskmanager-devsecops
+git checkout develop
+
+# Configurer le .env
+cd docker
+cp .env.example .env
+# Renseigner DB_PASSWORD, DB_ROOT_PASSWORD, DOMAIN, ACME_EMAIL
+
+# Build et démarrage (Let's Encrypt s'obtient automatiquement)
+docker compose up --build -d
+
+# Vérifier tous les conteneurs sains
+docker ps
+docker compose logs -f traefik
+```
 
 ### Vérification du déploiement
 
@@ -171,12 +215,14 @@ docker compose up --build
 docker ps
 
 # Vérifier les logs
-docker logs taskmanager-devsecops-back-1
-docker logs taskmanager-devsecops-front-1
+docker compose logs back
+docker compose logs front
 
-# Tester l'API
-curl http://localhost:5000/health
-curl http://localhost:8080/
+# Tester l'API (interne)
+curl http://localhost:5000/health  # dev uniquement
+
+# Tester HTTPS (production)
+curl -sI https://<DOMAIN>
 ```
 
 ---
@@ -497,16 +543,17 @@ public class SecurityHeadersMiddleware
 
 ### Configuration de sécurité par service
 
-| Mesure                   | Backend           | Frontend                 | Base de données                       |
-| ------------------------ | ----------------- | ------------------------ | ------------------------------------- |
-| **Utilisateur non-root** | `appuser:1001`    | `nginx:101`              | `mysql:999`                           |
-| **no-new-privileges**    | ✅                | ✅                       | ✅                                    |
-| **cap_drop: ALL**        | ✅                | ✅                       | ✅                                    |
-| **cap_add**              | -                 | -                        | `CHOWN, SETGID, SETUID, DAC_OVERRIDE` |
-| **read_only**            | -                 | ✅                       | -                                     |
-| **tmpfs**                | `/tmp`            | `/tmp, /var/cache/nginx` | -                                     |
-| **Limites ressources**   | 256M RAM, 0.5 CPU | 64M RAM, 0.25 CPU        | 512M RAM, 0.5 CPU                     |
-| **HEALTHCHECK**          | ✅ (curl /health) | ✅ (wget /)              | ✅ (mysqladmin)                       |
+| Mesure                   | Traefik                | Backend           | Frontend                 | Base de données                       |
+| ------------------------ | ---------------------- | ----------------- | ------------------------ | ------------------------------------- |
+| **Utilisateur non-root** | `root` (requis TLS)    | `appuser:1001`    | `nginx:101`              | `root` (image officielle)             |
+| **no-new-privileges**    | ✅                     | ✅                | ✅                       | ✅                                    |
+| **cap_drop: ALL**        | ✅                     | ✅                | ✅                       | ✅                                    |
+| **cap_add**              | `NET_BIND_SERVICE`     | -                 | -                        | `CHOWN, SETGID, SETUID, DAC_OVERRIDE` |
+| **read_only**            | -                      | -                 | ✅                       | -                                     |
+| **tmpfs**                | -                      | `/tmp`            | `/tmp, /var/cache/nginx` | -                                     |
+| **Limites ressources**   | 64M RAM, 0.25 CPU      | 256M RAM, 0.5 CPU | 64M RAM, 0.25 CPU        | 512M RAM, 0.5 CPU                     |
+| **HEALTHCHECK**          | -                      | ✅ (curl /health) | ✅ (wget /)              | ✅ (healthcheck.sh)                   |
+| **Ports exposés host**   | 80, 443 uniquement     | aucun             | aucun                    | aucun                                 |
 
 ### Dockerfile sécurisés
 
@@ -563,16 +610,19 @@ server {
 ```bash
 # Base de données
 DB_NAME=taskmanager
-DB_USER=taskmanager_user
+DB_USER=taskmanager
 DB_PASSWORD=<mot_de_passe_fort>
 DB_ROOT_PASSWORD=<mot_de_passe_root_fort>
 
-# CORS (origines autorisées)
-CORS_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
+# Domaine public (utilisé par Traefik pour Let's Encrypt + CORS backend)
+DOMAIN=<ip-formatée>.sslip.io   # ex : 13-38-90-39.sslip.io
 
-# Environnement
-COMPOSE_PROJECT_NAME=taskmanager-devsecops
+# Email pour les notifications Let's Encrypt
+ACME_EMAIL=<email>
 ```
+
+> En production, `Cors__AllowedOrigins` du backend est automatiquement défini
+> à `https://${DOMAIN}` via docker-compose — pas de variable séparée.
 
 ### Variables d'application
 
@@ -607,7 +657,110 @@ export const environment = {
 
 ---
 
-## 12. Ce qui a été fait
+## 12. Déploiement public HTTPS — AWS EC2 + Traefik
+
+### Infrastructure
+
+- **Instance** : AWS EC2 Amazon Linux 2023, région `eu-west-3` (Paris)
+- **Accès** : AWS SSM Session Manager — aucun port SSH (22) ouvert
+- **Firewall** : AWS Security Group (géré par Terraform) — seuls les ports 80 et 443 autorisés en entrée
+- **Stockage** : EBS chiffré, IMDSv2 requis (IMDSv1 bloqué)
+- **Registre images** : Amazon ECR
+
+### Traefik — Reverse Proxy TLS
+
+Traefik est le point d'entrée unique de l'application en production. Il gère :
+
+- **TLS termination** : déchiffre HTTPS et transmet en HTTP interne aux conteneurs
+- **Let's Encrypt ACME** : obtention et renouvellement automatique du certificat via TLS challenge
+- **Redirection HTTP → HTTPS** : toute requête sur le port 80 est redirigée en 308
+- **HSTS** : `max-age=31536000; includeSubDomains; preload`
+- **Routing Docker** : labels sur le conteneur `front` pour définir le host et le resolver
+
+```yaml
+# Extrait docker-compose.yml — labels du conteneur front
+labels:
+  - "traefik.enable=true"
+  - "traefik.http.routers.front.rule=Host(`${DOMAIN}`)"
+  - "traefik.http.routers.front.entrypoints=websecure"
+  - "traefik.http.routers.front.tls.certresolver=letsencrypt"
+  - "traefik.http.middlewares.hsts.headers.stsSeconds=31536000"
+  - "traefik.http.middlewares.hsts.headers.stsIncludeSubdomains=true"
+  - "traefik.http.middlewares.hsts.headers.stsPreload=true"
+  - "traefik.http.routers.front.middlewares=hsts"
+```
+
+### Certificat Let's Encrypt
+
+| Champ    | Valeur                            |
+| -------- | --------------------------------- |
+| Domaine  | `13-38-90-39.sslip.io`            |
+| Émetteur | Let's Encrypt — CN=R13            |
+| Validité | 1 mai 2026 → 30 juillet 2026      |
+| Stockage | Volume Docker `letsencrypt`       |
+| Renouvellement | Automatique (Traefik, 30j avant expiry) |
+
+### Domaine sslip.io
+
+`sslip.io` est un service DNS gratuit qui résout automatiquement un sous-domaine vers l'adresse IP encodée dans le nom. Ex : `13-38-90-39.sslip.io` → `13.38.90.39`. Aucun compte requis. Utilisé pour obtenir un FQDN valide pour Let's Encrypt sans acheter de domaine.
+
+---
+
+## 13. Audit de sécurité — Vérifications post-déploiement
+
+Vérifications réalisées le 1er mai 2026 après déploiement complet.
+
+### Résultats — TLS et exposition réseau
+
+| Vérification | Commande | Résultat |
+| --- | --- | --- |
+| Certificat valide | `openssl s_client … \| openssl x509 -noout -dates` | Let's Encrypt, valide jusqu'au 30/07/2026 ✅ |
+| TLS 1.0 rejeté | `openssl s_client -tls1` | `tlsv1 alert protocol version` ✅ |
+| TLS 1.1 rejeté | `openssl s_client -tls1_1` | `tlsv1 alert protocol version` ✅ |
+| HTTP → HTTPS | `curl -sI http://…` | `308 Permanent Redirect` ✅ |
+| Ports ouverts | `nmap -p 22,80,443,3306,5000,8080` | **80 et 443 uniquement** ✅ |
+| Ports host (instance) | `ss -tlnp` | `0.0.0.0:80`, `0.0.0.0:443` + loopback containerd ✅ |
+| PortBindings db/back | `docker inspect --format PortBindings` | `{}` — aucun port exposé ✅ |
+
+### Résultats — Headers HTTP
+
+| Header | Valeur | Statut |
+| --- | --- | --- |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | ✅ |
+| `X-Frame-Options` | `DENY` | ✅ |
+| `X-Content-Type-Options` | `nosniff` | ✅ |
+| `X-XSS-Protection` | `1; mode=block` | ✅ |
+| `Content-Security-Policy` | `default-src 'self'; …` | ✅ |
+
+### Résultats — Sécurité conteneurs
+
+| Conteneur | SecurityOpt | CapDrop | CapAdd | Utilisateur |
+| --- | --- | --- | --- | --- |
+| traefik | `no-new-privileges` | `ALL` | `NET_BIND_SERVICE` | root |
+| front | `no-new-privileges` | `ALL` | — | nginx (101) |
+| back | `no-new-privileges` | `ALL` | — | appuser (1001) |
+| db | `no-new-privileges` | `ALL` | CHOWN, SETGID, SETUID, DAC_OVERRIDE | root (image officielle) |
+
+### Résultats — AWS
+
+| Vérification | Résultat |
+| --- | --- |
+| IMDSv2 sans token | Aucune réponse (IMDSv1 bloqué) ✅ |
+| IMDSv2 avec token | Instance ID retourné ✅ |
+| Port 22 externe | Filtré par Security Group (non visible via nmap) ✅ |
+
+### Consommation ressources (baseline)
+
+| Conteneur | CPU | RAM utilisée | Limite |
+| --- | --- | --- | --- |
+| traefik | 0.00% | 30 MB | 64 MB |
+| front | 0.00% | 4 MB | 64 MB |
+| back | 0.74% | 84 MB | 256 MB |
+| db | 0.01% | 97 MB | 512 MB |
+
+---
+
+## 14. Ce qui a été fait
 
 ### ✅ Fonctionnalités implémentées
 
@@ -617,6 +770,7 @@ export const environment = {
 - **Sécurité OWASP** : Contrôles A01, A02, A03, A05, A07
 - **Conteneurisation** : Docker sécurisé avec hardening
 - **Tests complets** : 25+ tests backend + frontend
+- **Déploiement public HTTPS** : Application accessible sur internet avec certificat Let's Encrypt valide
 
 ### ✅ Tests backend (xUnit + Moq + FluentAssertions)
 
@@ -646,17 +800,52 @@ export const environment = {
 
 ### ✅ Docker Bench / Hardening containers
 
-| Mesure                     | Détail                                                                            |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| **Non-root users**         | Back: appuser uid 1001 ; Front: nginxinc/nginx-unprivileged uid 101               |
-| **no-new-privileges:true** | Sur tous les containers                                                           |
-| **cap_drop: ALL**          | + cap_add minimal pour MariaDB uniquement                                         |
-| **read_only: true**        | Container front avec tmpfs pour /tmp et /var/cache/nginx                          |
-| **Resource limits**        | memory + CPU sur chaque service                                                   |
-| **HEALTHCHECK**            | Dans chaque Dockerfile ET docker-compose                                          |
-| **server_tokens off**      | nginx ne divulgue plus sa version                                                 |
+| Mesure                     | Détail                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------- |
+| **Non-root users**         | Back: appuser uid 1001 ; Front: nginxinc/nginx-unprivileged uid 101                |
+| **no-new-privileges:true** | Sur tous les conteneurs (traefik, front, back, db)                                 |
+| **cap_drop: ALL**          | Sur tous les conteneurs                                                            |
+| **cap_add minimal**        | Traefik: `NET_BIND_SERVICE` ; MariaDB: `CHOWN, SETGID, SETUID, DAC_OVERRIDE`      |
+| **read_only: true**        | Container front avec tmpfs pour /tmp et /var/cache/nginx                           |
+| **Resource limits**        | memory + CPU sur chaque service                                                    |
+| **HEALTHCHECK**            | Dans chaque Dockerfile ET docker-compose                                           |
+| **server_tokens off**      | nginx ne divulgue plus sa version                                                  |
 | **Security headers nginx** | X-Content-Type-Options, X-Frame-Options, CSP, Referrer-Policy, Permissions-Policy |
+| **Ports internes non exposés** | db (3306), back (5000), front (8080) : aucun port host binding              |
+
+### ✅ Traefik + HTTPS public
+
+| Élément                        | Détail                                                              |
+| ------------------------------ | ------------------------------------------------------------------- |
+| **Reverse proxy**              | Traefik v3.3 — point d'entrée unique (ports 80 et 443)             |
+| **TLS automatique**            | Let's Encrypt ACME via TLS challenge, renouvellement automatique    |
+| **Redirection HTTP → HTTPS**   | 308 Permanent Redirect sur toutes les requêtes HTTP                 |
+| **HSTS**                       | `max-age=31536000; includeSubDomains; preload`                      |
+| **TLS 1.0 / 1.1**             | Rejetés par Traefik (alert protocol version 70)                     |
+| **CORS production**            | `Cors__AllowedOrigins: https://${DOMAIN}` (restreint au domaine)    |
+| **ASPNETCORE_ENVIRONMENT**     | `Production` — Swagger désactivé, stack traces masquées             |
+| **Domaine**                    | `13-38-90-39.sslip.io` (sslip.io — DNS libre, sans compte)         |
+
+### ✅ AWS / Infrastructure sécurisée
+
+| Élément                  | Détail                                                           |
+| ------------------------ | ---------------------------------------------------------------- |
+| **Accès instance**       | AWS SSM Session Manager uniquement — port 22 fermé (SG + sshd désactivé) |
+| **Security Group**       | Inbound : 80 et 443 uniquement — géré par Terraform              |
+| **IMDSv2**               | Obligatoire (`http_tokens = "required"`) — IMDSv1 bloqué         |
+| **EBS chiffré**          | Volume racine chiffré                                            |
+| **SSM logs**             | Sessions journalisées dans CloudWatch                            |
+| **ECR**                  | Registre privé Amazon ECR pour les images Docker                 |
+
+### ✅ Audit de sécurité post-déploiement
+
+- Scan nmap : seuls ports 80/443 visibles depuis internet
+- TLS 1.0 et 1.1 rejetés, TLS 1.2+ uniquement
+- Tous les headers de sécurité présents et corrects
+- IMDSv2 vérifié (IMDSv1 inaccessible sans token)
+- PortBindings db/back vides (aucun port exposé sur l'hôte)
+- Consommation RAM bien en dessous des limites définies
 
 ---
 
-_Documentation générée le 30 avril 2026 - Projet final Bachelor Cybersécurité DevSecOps_
+_Documentation mise à jour le 1er mai 2026 - Projet final Bachelor Cybersécurité DevSecOps_
