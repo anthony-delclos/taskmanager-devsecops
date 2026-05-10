@@ -1,0 +1,163 @@
+# ============================================================
+# TASKS — RÔLE DOCKER
+# OS cible : Amazon Linux 2023 (gestionnaire de paquets : dnf)
+#
+# Ordre logique :
+#   1. Prérequis système
+#   2. Installation Docker + activation au boot
+#   3. Installation Docker Compose
+#   4. Ajout de ec2-user au groupe docker
+#   5. Vérification que Docker est started/enabled (idempotence)
+#   6. Authentification ECR (AWS Container Registry)
+#   7. Audit sécurité Docker Bench Security
+#
+# Note : become: true est déclaré au niveau du playbook (deploy.yml).
+# Il est supprimé ici sur chaque tâche pour éviter la redondance.
+# ============================================================
+---
+
+# ------------------------------------------------------------------
+# 1. PRÉREQUIS SYSTÈME
+# ------------------------------------------------------------------
+
+- name: Install system prerequisites
+  ansible.builtin.dnf:
+    name:
+      - dnf-plugins-core
+    state: present
+
+# ------------------------------------------------------------------
+# 2. INSTALLATION DOCKER
+# ------------------------------------------------------------------
+
+- name: Install Docker
+  ansible.builtin.dnf:
+    name: docker
+    state: present
+  # Notifie le handler fusionné qui démarre ET active Docker au boot.
+  # Correctif : l'ancienne version notifiait "Start docker" uniquement —
+  # "Enable docker" n'était jamais déclenché → Docker non actif au reboot.
+  notify: Start and enable docker
+
+# ------------------------------------------------------------------
+# 3. DURCISSEMENT DAEMON DOCKER (CIS Benchmark)
+#    daemon.json corrige 5 WARNs Docker Bench Security :
+#      2.1  icc: false           — isole les conteneurs sur bridge par défaut
+#      2.12 log-driver           — active la journalisation structurée
+#      2.14 live-restore         — conteneurs survivent au redémarrage du daemon
+#      2.15 userland-proxy:false — supprime le proxy userland (perfs + surface d'attaque)
+#      2.18 no-new-privileges    — interdit l'escalade de privilèges par défaut
+# ------------------------------------------------------------------
+
+- name: Configure Docker daemon (CIS security hardening)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {
+        "icc": false,
+        "live-restore": true,
+        "userland-proxy": false,
+        "no-new-privileges": true,
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+  notify: Restart docker
+
+# ------------------------------------------------------------------
+# 4. INSTALLATION DOCKER COMPOSE
+# ------------------------------------------------------------------
+
+- name: Download Docker Compose binary
+  ansible.builtin.get_url:
+    url: "https://github.com/docker/compose/releases/download/v{{ docker_compose_version }}/docker-compose-linux-x86_64"
+    dest: /usr/local/bin/docker-compose
+    mode: "0755"
+    # TODO : ajouter checksum: "sha256:<hash>" depuis la release GitHub officielle
+    #        pour garantir l'intégrité du binaire téléchargé
+
+- name: Ensure Docker Compose is executable
+  ansible.builtin.file:
+    path: /usr/local/bin/docker-compose
+    mode: "0755"
+    state: file
+
+# ------------------------------------------------------------------
+# 5. GROUPE DOCKER
+# ------------------------------------------------------------------
+
+- name: Add ec2-user to docker group
+  ansible.builtin.user:
+    name: "{{ docker_user }}"
+    groups: docker
+    append: true
+  notify: Reload user permissions
+
+# ------------------------------------------------------------------
+# 6. GARANTIR QUE DOCKER EST DÉMARRÉ ET ACTIVÉ AU BOOT
+#    Les handlers s'exécutent en fin de play. Cette tâche couvre
+#    les runs idempotents où Docker est déjà installé (pas de notify)
+#    mais potentiellement arrêté. Doit précéder ECR login et Bench.
+# ------------------------------------------------------------------
+
+- name: Ensure Docker service is started and enabled
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+# ------------------------------------------------------------------
+# 7. AUTHENTIFICATION ECR (AWS Elastic Container Registry)
+#    Permet à l'instance de puller les images depuis ECR.
+#    Prérequis IAM : policy AmazonEC2ContainerRegistryReadOnly
+#    doit être attachée au role devsecops-ssm-role dans Terraform.
+#    TODO : ajouter aws_iam_role_policy_attachment dans main.tf
+# ------------------------------------------------------------------
+
+- name: Authenticate to Amazon ECR
+  ansible.builtin.shell: >
+    aws ecr get-login-password
+    --region {{ aws_region }}
+    | docker login
+    --username AWS
+    --password-stdin {{ ecr_registry_url }}
+  changed_when: false
+  # Masque le token d'authentification dans les logs Ansible
+  no_log: true
+  # À supprimer une fois le repo ECR créé et l'IAM policy attachée
+  ignore_errors: true
+
+# ------------------------------------------------------------------
+# 8. AUDIT SÉCURITÉ — DOCKER BENCH SECURITY
+#    Vérifie la conformité de la config Docker selon CIS Benchmark.
+#    S'exécute APRÈS l'étape 5 (Docker démarré/activé confirmé).
+# ------------------------------------------------------------------
+
+- name: Run Docker Bench Security audit
+  ansible.builtin.command: >
+    docker run --rm
+    --net host
+    --pid host
+    --userns host
+    --cap-add audit_control
+    -e DOCKER_CONTENT_TRUST={{ docker_content_trust | default('0') }}
+    -v /etc:/etc:ro
+    -v /lib/systemd/system:/lib/systemd/system:ro
+    -v /run/containerd:/run/containerd:ro
+    -v /var/lib:/var/lib:ro
+    -v /var/run/docker.sock:/var/run/docker.sock:ro
+    --label docker_bench_security
+    docker/docker-bench-security
+  register: docker_bench_result
+  changed_when: false
+  # Un code retour non-zéro = avertissements CIS, pas une erreur fatale
+  ignore_errors: true
+
+- name: Display Docker Bench Security results
+  ansible.builtin.debug:
+    var: docker_bench_result.stdout_lines

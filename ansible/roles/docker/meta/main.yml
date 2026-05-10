@@ -1,0 +1,20 @@
+# ============================================================
+# META — RÔLE DOCKER
+# Déclare les métadonnées et dépendances du rôle.
+# Le rôle "security" doit s'exécuter avant "docker" — cette
+# dépendance est aussi exprimée dans playbooks/deploy.yml.
+# ============================================================
+---
+galaxy_info:
+  role_name: docker
+  author: DevSecOps-Team
+  description: "Installation Docker + Docker Compose + ECR login sur Amazon Linux 2023"
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Amazon
+      versions:
+        - "2023"
+
+# L'ordre security → docker est garanti par deploy.yml.
+# Pas de dépendance déclarée ici pour éviter la double exécution.
+dependencies: []

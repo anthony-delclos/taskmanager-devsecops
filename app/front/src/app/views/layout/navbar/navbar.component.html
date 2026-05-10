@@ -1,0 +1,15 @@
+<nav class="navbar">
+  <div class="navbar-brand">
+    <a routerLink="/">TaskManager</a>
+  </div>
+  <ul class="navbar-links">
+    <li>
+      <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
+        Accueil
+      </a>
+    </li>
+    <li>
+      <a routerLink="/users" routerLinkActive="active">Utilisateurs</a>
+    </li>
+  </ul>
+</nav>

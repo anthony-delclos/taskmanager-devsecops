@@ -1,0 +1,92 @@
+.page {
+  padding: 2rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.page-header h2 {
+  color: #cdd6f4;
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #1e1e2e;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table th,
+.table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #313244;
+  color: #cdd6f4;
+}
+
+.table th {
+  background: #181825;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #a6adc8;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.table tr:hover td {
+  background: #181825;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: #313244;
+  color: #cdd6f4;
+}
+
+.badge-admin {
+  background: #3d2a5e;
+  color: #cba6f7;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.info {
+  color: #a6adc8;
+  text-align: center;
+  padding: 3rem;
+}
+
+.error {
+  color: #f38ba8;
+  text-align: center;
+  padding: 1rem;
+  background: #2d1b22;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+.info-footer {
+  color: #585b70;
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+  text-align: right;
+}
