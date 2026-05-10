@@ -106,8 +106,7 @@ jobs:
           npm run test --prefix app/front -- \
             --watch=false \
             --browsers=ChromeHeadless \
-            --no-progress \
-            --code-coverage
+            --no-progress
 
       - name: Upload frontend coverage report
         uses: actions/upload-artifact@v4
