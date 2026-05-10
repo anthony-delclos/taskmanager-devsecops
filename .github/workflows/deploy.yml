@@ -233,6 +233,7 @@ jobs:
     permissions:
       contents: read
       id-token: write  # OBLIGATOIRE pour OIDC — permet à GitHub de générer le JWT
+      security-events: write
 
     outputs:
       # Expose le SHA du commit aux jobs suivants pour référencer
