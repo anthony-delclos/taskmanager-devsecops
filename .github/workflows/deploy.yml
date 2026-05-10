@@ -1,0 +1,642 @@
+# ==============================================================================
+# CI/CD DevSecOps Pipeline — TaskManager
+#
+# Flux complet :
+#   Job 1 — Tests unitaires (.NET xUnit + Angular Karma)
+#   Job 2 — SAST (Semgrep)
+#   Job 3 — Scan secrets (Gitleaks)
+#   Job 4 — Build Docker + Scan Trivy + Push ECR
+#   Job 5 — Deploy Ansible via AWS SSM
+#
+# ==============================================================================
+
+name: CI/CD DevSecOps — TaskManager
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-west-3
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-3.amazonaws.com
+  BACK_IMAGE_NAME: taskmanager-devsecops-back
+  FRONT_IMAGE_NAME: taskmanager-devsecops-front
+  EC2_INSTANCE_ID: i-04505dbb91806e12a
+
+# ==============================================================================
+# JOB 1 — TESTS UNITAIRES
+# Backend : dotnet test (xUnit + Moq + FluentAssertions + coverlet)
+# Frontend : ng test --watch=false (Angular/Karma + ChromeHeadless)
+#
+# Pourquoi en premier :
+#   Si le code est cassé fonctionnellement, inutile de faire tourner
+#   les scans de sécurité ou de builder des images. Fail fast.
+# ==============================================================================
+jobs:
+  unit-tests:
+    name: "Job 1 — Unit Tests (Backend .NET + Frontend Angular)"
+    runs-on: ubuntu-latest
+
+    steps:
+      # Récupère l'intégralité du code source du repo sur la branche develop.
+      # fetch-depth: 0 = historique complet (utile pour Gitleaks au job suivant
+      # qui scannera tous les commits, pas seulement le dernier).
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── BACKEND ────────────────────────────────────────────────────────────
+      # Installation du SDK .NET 8 correspondant au TargetFramework du projet.
+      # Le fichier global.json du repo impose la version exacte du SDK.
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Restaure les packages NuGet (xUnit, Moq, FluentAssertions, coverlet).
+      # Équivalent de `npm install` mais pour NuGet.
+      - name: Restore .NET dependencies
+        run: dotnet restore app/back/TaskManager.sln
+
+      # Lance tous les tests xUnit du projet TaskManager.Tests.
+      # --collect:"XPlat Code Coverage" active coverlet pour générer un rapport
+      # de couverture de code au format Cobertura (XML).
+      # --results-directory stocke les rapports dans ./coverage/.
+      - name: Run .NET unit tests (xUnit + coverlet)
+        run: |
+          dotnet test app/back/TaskManager.Tests/TaskManager.Tests.csproj \
+            --no-restore \
+            --configuration Release \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage/back \
+            --logger "trx;LogFileName=back-results.trx"
+
+      # Publie le rapport de couverture comme artefact GitHub Actions.
+      # Accessible dans l'onglet "Summary" du workflow run pour analyse.
+      - name: Upload backend coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: ./coverage/back
+          retention-days: 7
+
+      # ── FRONTEND ───────────────────────────────────────────────────────────
+      # Installation de Node.js LTS. Angular 17+ requiert Node 18+.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: app/front/package-lock.json
+
+      # Installe les dépendances npm (Angular CLI, Karma, Jasmine, etc.).
+      # --ci installe exactement ce qui est dans package-lock.json sans màj.
+      - name: Install frontend dependencies
+        run: npm ci --prefix app/front
+
+      # Lance les tests Angular avec Chrome en mode headless (sans interface
+      # graphique, compatible avec les runners GitHub Actions).
+      # --no-progress réduit le verbosité des logs dans la CI.
+      - name: Run Angular unit tests (Karma + ChromeHeadless)
+        run: |
+          npm run test --prefix app/front -- \
+            --watch=false \
+            --browsers=ChromeHeadless \
+            --no-progress \
+            --code-coverage
+
+      - name: Upload frontend coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: app/front/coverage
+          retention-days: 7
+
+# ==============================================================================
+# JOB 2 — SAST (SEMGREP)
+# Analyse statique du code source AVANT le build.
+#
+# Semgrep analyse les patterns de code dangereux :
+#   - Injections SQL, XSS, SSRF
+#   - Secrets hardcodés dans le code (tokens, clés API en clair)
+#   - Mauvaises pratiques crypto (MD5, DES, SHA1)
+#   - Vulnérabilités .NET/C# (CVE patterns)
+#   - Misconfigurations Angular/TypeScript
+#
+# Pourquoi avant le build :
+#   L'analyse porte sur le code source, pas sur l'image Docker.
+#   Si le code est vulnérable, inutile de le compiler puis de scanner l'image.
+# ==============================================================================
+  sast-semgrep:
+    name: "Job 2 — SAST (Semgrep)"
+    runs-on: ubuntu-latest
+    needs: unit-tests  # Ne démarre que si les tests passent
+
+    # permission write sur security-events pour uploader les résultats
+    # dans l'onglet "Security > Code scanning" de GitHub.
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Action officielle Semgrep. Utilise les rulesets communautaires :
+      #   p/csharp      → règles C#/.NET (injection, deserialisation, etc.)
+      #   p/typescript  → règles TypeScript/Angular
+      #   p/owasp-top-ten → OWASP Top 10 cross-languages
+      #   p/secrets     → patterns de secrets dans le code source
+      #
+      # SARIF = format standard pour les résultats de sécurité statique.
+      # GitHub l'ingère nativement dans l'onglet Security.
+      - name: Run Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >
+            p/csharp
+            p/typescript
+            p/owasp-top-ten
+            p/secrets
+          generateSarif: "1"
+          auditOn: push
+
+      # Upload du rapport SARIF dans GitHub Code Scanning.
+      # Les vulnérabilités apparaissent dans Sécurité > Analyse du code
+      # avec leur fichier source, ligne, sévérité et description.
+      - name: Upload Semgrep SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()  # Upload même si Semgrep a trouvé des problèmes
+        with:
+          sarif_file: semgrep.sarif
+
+# ==============================================================================
+# JOB 3 — SCAN SECRETS (GITLEAKS)
+# Détecte les secrets commités dans l'historique Git.
+#
+# Gitleaks scanne TOUS les commits (fetch-depth: 0 au Job 1),
+# pas uniquement le dernier push. Cela couvre le cas où un secret
+# a été commité puis "supprimé" (il reste dans l'historique Git).
+#
+# Exemples détectés : AWS keys, tokens GitHub/JWT, clés privées RSA,
+# mots de passe dans des fichiers de config, credentials Docker.
+#
+# Distinct de Semgrep : Gitleaks cible spécifiquement les patterns
+# de secrets dans l'historique, Semgrep analyse les vulnérabilités
+# dans la logique du code courant.
+# ==============================================================================
+  secret-scan:
+    name: "Job 3 — Secret Scan (Gitleaks)"
+    runs-on: ubuntu-latest
+    needs: unit-tests  # Parallèle au Job 2, dépend seulement du Job 1
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      # fetch-depth: 0 indispensable pour que Gitleaks ait accès
+      # à l'intégralité de l'historique Git (tous les commits).
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Action officielle Gitleaks.
+      # fail: true → le job échoue si un secret est trouvé (bloque le pipeline).
+      # report-format: sarif → compatible avec GitHub Security tab.
+      - name: Run Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          fail: true
+          report-format: sarif
+          report-path: gitleaks-report.sarif
+
+      - name: Upload Gitleaks SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gitleaks-report.sarif
+
+# ==============================================================================
+# JOB 4 — BUILD DOCKER + SCAN TRIVY + PUSH ECR
+#
+# Ce job ne démarre que si les Jobs 1, 2 ET 3 ont tous réussi.
+# L'authentification AWS utilise OIDC (OpenID Connect) :
+#   → GitHub génère un JWT signé prouvant l'identité du workflow
+#   → AWS vérifie ce JWT via le provider OIDC configuré dans IAM
+#   → AWS retourne des credentials temporaires (15min-1h)
+#   → Aucune clé AWS statique n'est stockée dans les secrets GitHub
+#
+# Trivy scanne les images Docker construites AVANT de les pousser sur ECR.
+# Si une CVE HIGH ou CRITICAL est détectée, le push est bloqué.
+# ==============================================================================
+  build-push:
+    name: "Job 4 — Build Docker + Trivy Scan + Push ECR"
+    runs-on: ubuntu-latest
+    needs: [sast-semgrep, secret-scan]  # Attend Jobs 2 ET 3
+
+    permissions:
+      contents: read
+      id-token: write  # OBLIGATOIRE pour OIDC — permet à GitHub de générer le JWT
+
+    outputs:
+      # Expose le SHA du commit aux jobs suivants pour référencer
+      # la version exacte de l'image à déployer.
+      image_tag: ${{ github.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── AUTHENTIFICATION AWS VIA OIDC ──────────────────────────────────────
+      # GitHub Actions contacte AWS STS (Security Token Service) avec un JWT.
+      # AWS vérifie la signature du JWT contre le provider OIDC enregistré,
+      # puis assume le rôle AWS_OIDC_ROLE_ARN et injecte les credentials
+      # temporaires (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
+      # dans l'environnement du runner. Durée de validité : 1h max.
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-actions-taskmanager-${{ github.run_id }}
+
+      # Login Docker sur ECR. Cette action appelle `aws ecr get-login-password`
+      # et fait un `docker login` avec le token retourné (valide 12h).
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Active le cache Docker BuildKit pour réutiliser les layers entre runs.
+      # Réduit significativement le temps de build si les dépendances n'ont pas changé.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── BUILD BACKEND ──────────────────────────────────────────────────────
+      # Double tag : SHA du commit (immuable, pour rollback précis)
+      #              + "latest" (pratique pour Ansible qui tirera toujours latest)
+      - name: Build backend Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app/back
+          file: ./app/back/Dockerfile
+          push: false  # On ne pousse PAS encore — Trivy doit scanner d'abord
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true  # Charge l'image dans le daemon Docker local pour Trivy
+
+      # ── BUILD FRONTEND ─────────────────────────────────────────────────────
+      - name: Build frontend Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app/front
+          file: ./app/front/Dockerfile
+          push: false
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      # ── SCAN TRIVY BACKEND ─────────────────────────────────────────────────
+      # Trivy scanne l'image Docker construite localement.
+      # Il analyse : l'OS de base (Debian/Alpine), les packages installés,
+      # les dépendances applicatives (.NET NuGet).
+      # exit-code: 1 → le job échoue si HIGH ou CRITICAL trouvé.
+      # format: sarif → upload vers GitHub Security tab.
+      - name: Scan backend image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}
+          format: sarif
+          output: trivy-back.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy backend results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-back.sarif
+          category: trivy-backend
+
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}
+          format: sarif
+          output: trivy-front.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy frontend results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-front.sarif
+          category: trivy-frontend
+
+      # ── PUSH ECR ───────────────────────────────────────────────────────────
+      # Seulement atteint si TOUS les scans Trivy ont passé (exit-code: 1 ci-dessus).
+      - name: Push backend image to ECR
+        if: github.ref == 'refs/heads/main'  # push ECR uniquement sur main
+        run: |
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest
+
+      - name: Push frontend image to ECR
+        if: github.ref == 'refs/heads/main'  # push ECR uniquement sur main
+        run: |
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest
+
+  # ============================================================================
+  # JOB 5 — DEPLOY VIA ANSIBLE + AWS SSM
+  #
+  # Ordre des opérations :
+  #   1. Auth OIDC AWS
+  #   2. Install Ansible + collections
+  #   3. Préparer le .env
+  #   4. Sauvegarder l'état actuel (tag rollback sur l'EC2)
+  #   5. Lancer le playbook Ansible (--tags docker)
+  #   6. Health check post-déploiement
+  #   7. (si échec) Rollback automatique vers l'état sauvegardé
+  # ============================================================================
+  deploy:
+    name: "Job 5 — Deploy via Ansible + AWS SSM"
+    runs-on: ubuntu-latest
+    needs: build-push  # Ne démarre que si le Job 4 a entièrement réussi
+    if: github.ref == 'refs/heads/main'  # déploie uniquement sur main
+
+    permissions:
+      contents: read
+      id-token: write  # Obligatoire pour OIDC
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── AUTH AWS OIDC ────────────────────────────────────────────────────────
+      # Chaque job tourne sur une VM fraîche — les credentials du Job 4
+      # ne persistent pas. Nouvelle session OIDC obligatoire.
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-actions-deploy-${{ github.run_id }}
+
+      # ── INSTALL ANSIBLE ──────────────────────────────────────────────────────
+      # community.aws  → plugin de connexion SSM (ansible_connection: community.aws.aws_ssm)
+      # amazon.aws     → modules ec2, s3, etc.
+      # boto3/botocore → SDK Python qu'Ansible utilise pour parler à AWS
+      - name: Install Ansible + AWS collections
+        run: |
+          pip install --quiet ansible boto3 botocore
+          ansible-galaxy collection install community.aws amazon.aws --quiet
+
+      # ── CONFIGURATION boto3 ──────────────────────────────────────────────────
+      # Les credentials sont déjà dans les variables d'env injectées par OIDC.
+      # On précise uniquement la région pour boto3.
+      - name: Configure AWS region for boto3 (SSM plugin)
+        run: |
+          mkdir -p ~/.aws
+          cat > ~/.aws/config << EOF
+          [default]
+          region = ${{ env.AWS_REGION }}
+          EOF
+
+      # ── PRÉPARER LE .ENV ─────────────────────────────────────────────────────
+      # Les valeurs viennent exclusivement des GitHub Secrets.
+      # IMAGE_TAG = SHA du commit courant, utilisé par le rôle Ansible
+      # pour construire l'URL ECR complète et puller la bonne version.
+      - name: Prepare .env file for remote deployment
+        run: |
+          cat > /tmp/deploy.env << EOF
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+          DOMAIN=${{ secrets.DOMAIN }}
+          ACME_EMAIL=${{ secrets.ACME_EMAIL }}
+          EOF
+
+      # ── SAUVEGARDE PRÉ-DÉPLOIEMENT (ROLLBACK POINT) ──────────────────────────
+      # AVANT de toucher quoi que ce soit sur l'EC2, on tague les images
+      # actuellement en production avec le label "rollback".
+      # Si le déploiement plante à mi-chemin, on sait exactement vers quoi revenir.
+      #
+      # La commande SSM retourne un CommandId. On attend sa complétion
+      # avant de passer à la suite (wait command-executed).
+      - name: Save current state as rollback point (via SSM)
+        id: save-rollback
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:rollback 2>/dev/null || true",
+              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:rollback 2>/dev/null || true",
+              "echo ROLLBACK_SAVED=OK"
+            ]' \
+            --region ${{ env.AWS_REGION }} \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Rollback save command ID: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }}
+
+          # Vérifie que la commande s'est bien terminée
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }} \
+            --query "StatusDetails" \
+            --output text)
+
+          echo "Rollback save status: $STATUS"
+          echo "rollback_command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
+
+      # ── DÉPLOIEMENT ANSIBLE ──────────────────────────────────────────────────
+      # Lance le playbook avec --tags docker uniquement.
+      # Le rôle docker Ansible doit :
+      #   1. Copier le .env sur l'EC2 (/opt/taskmanager/.env)
+      #   2. docker login ECR (aws ecr get-login-password | docker login)
+      #   3. docker pull des nouvelles images (tag = image_tag = SHA)
+      #   4. docker compose down && docker compose up -d
+      #
+      # id: ansible-deploy → permet au bloc "if: failure()" ci-dessous
+      # de détecter spécifiquement un échec de cette étape.
+      - name: Run Ansible deploy playbook
+        id: ansible-deploy
+        env:
+          ANSIBLE_FORCE_COLOR: "1"
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_DEPRECATION_WARNINGS: "False"
+        run: |
+          ansible-playbook \
+            -i ansible/inventory/hosts.yml \
+            ansible/playbooks/deploy.yml \
+            --tags docker \
+            --extra-vars "image_tag=${{ github.sha }} ecr_registry=${{ env.ECR_REGISTRY }}" \
+            -v
+
+      # ── HEALTH CHECK POST-DÉPLOIEMENT ────────────────────────────────────────
+      # On attend 40s que les containers soient complètement up
+      # (healthcheck Docker : start_period=20s + marge).
+      #
+      # La commande vérifie :
+      #   - Que tous les services sont en état "running"
+      #   - Qu'aucun container n'est en "restarting" (crash loop)
+      #
+      # Si le health check échoue (exit code != 0), l'étape fail
+      # et le bloc rollback ci-dessous se déclenche automatiquement.
+      - name: Health check — verify containers are running
+        id: health-check
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "sleep 40",
+              "cd /opt/taskmanager",
+              "docker compose ps --format json | python3 -c \"import sys,json; services=json.load(sys.stdin) if isinstance(json.load(open(0)),list) else [json.load(open(0))]; bad=[s[\\\"Name\\\"] for s in services if s[\\\"State\\\"] != \\\"running\\\"]; sys.exit(1) if bad else print(\\\"All services healthy:\\\", [s[\\\"Name\\\"] for s in services])\" 2>/dev/null || docker compose ps | grep -v Up && exit 1 || exit 0"
+            ]' \
+            --region ${{ env.AWS_REGION }} \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Health check command ID: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }}
+
+          # Récupère la sortie et le status
+          OUTPUT=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }} \
+            --query "StandardOutputContent" \
+            --output text)
+
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }} \
+            --query "StatusDetails" \
+            --output text)
+
+          echo "=== Docker containers state ==="
+          echo "$OUTPUT"
+          echo "=== Health check status: $STATUS ==="
+
+          # Échoue le job si la commande SSM a échoué
+          if [ "$STATUS" != "Success" ]; then
+            echo "::error::Health check FAILED — containers are not healthy"
+            exit 1
+          fi
+
+      # ── ROLLBACK AUTOMATIQUE ─────────────────────────────────────────────────
+      # Se déclenche UNIQUEMENT si ansible-deploy OU health-check a échoué.
+      # "if: failure()" est évalué sur l'ensemble du job — il est vrai
+      # dès qu'une étape précédente a retourné un code d'erreur.
+      #
+      # Le rollback :
+      #   1. Stoppe les containers actuels (potentiellement dans un état instable)
+      #   2. Retague les images :rollback vers :latest
+      #   3. Relance docker compose avec les anciennes images
+      #   4. Envoie une notification d'échec dans les logs
+      - name: ROLLBACK — Restore previous version on failure
+        if: failure() && steps.save-rollback.outcome == 'success'
+        run: |
+          echo "::warning::Deployment failed — initiating automatic rollback"
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "echo === ROLLBACK INITIATED ===",
+              "cd /opt/taskmanager",
+              "docker compose down --timeout 30 || true",
+              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:rollback ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest",
+              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:rollback ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest",
+              "docker compose up -d",
+              "sleep 20",
+              "docker compose ps",
+              "echo === ROLLBACK COMPLETED ==="
+            ]' \
+            --region ${{ env.AWS_REGION }} \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Rollback command ID: $COMMAND_ID"
+
+          # Attend max 3 minutes pour le rollback
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }}
+
+          ROLLBACK_OUTPUT=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }} \
+            --query "StandardOutputContent" \
+            --output text)
+
+          ROLLBACK_STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ env.AWS_REGION }} \
+            --query "StatusDetails" \
+            --output text)
+
+          echo "=== Rollback output ==="
+          echo "$ROLLBACK_OUTPUT"
+          echo "=== Rollback status: $ROLLBACK_STATUS ==="
+
+          if [ "$ROLLBACK_STATUS" = "Success" ]; then
+            echo "::warning::Rollback SUCCESSFUL — previous version is back online"
+          else
+            echo "::error::Rollback FAILED — manual intervention required on ${{ env.EC2_INSTANCE_ID }}"
+          fi
+
+      # ── RÉSUMÉ FINAL ─────────────────────────────────────────────────────────
+      # Affiche un résumé clair dans les logs du workflow run.
+      # Visible dans l'onglet "Summary" de GitHub Actions.
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Info | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ECR Back image | \`${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ECR Front image | \`${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| EC2 Instance | \`${{ env.EC2_INSTANCE_ID }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ansible job | \`${{ steps.ansible-deploy.outcome }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health check | \`${{ steps.health-check.outcome }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.ansible-deploy.outcome }}" = "failure" ] || [ "${{ steps.health-check.outcome }}" = "failure" ]; then
+            echo "| **Result** | ❌ Deployment FAILED — rollback triggered |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Result** | ✅ Deployment SUCCESSFUL |" >> $GITHUB_STEP_SUMMARY
+          fi
