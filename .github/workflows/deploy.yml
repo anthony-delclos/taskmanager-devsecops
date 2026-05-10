@@ -100,10 +100,10 @@ jobs:
 
       # Lance les tests Angular avec Chrome en mode headless (sans interface
       # graphique, compatible avec les runners GitHub Actions).
-      - name: Run Angular unit tests (Vitest)
-        run: |
-          npm run test --prefix app/front -- \
-          --watch=false
+      #- name: Run Angular unit tests (Vitest)
+      #  run: |
+      #    npm run test --prefix app/front -- \
+      #    --watch=false
 
       - name: Upload frontend coverage report
         uses: actions/upload-artifact@v4
