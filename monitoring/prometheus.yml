@@ -17,5 +17,5 @@ scrape_configs:
   # Métriques de l'API .NET
   - job_name: api
     static_configs:
-      - targets: ['api:5000']
+      - targets: ['back:5000']
     metrics_path: /metrics
