@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
+using Prometheus;
 using TaskManager.API.Entities;
 using TaskManager.API.Middleware;
 using TaskManager.API.Repositories;
@@ -91,6 +92,11 @@ if (app.Environment.IsDevelopment())
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseRateLimiter();
 app.UseCors("AllowAngular");
+
+// Prometeheus metrics endpoint
+app.UseMetricServer();    // Crée le point d'accès /metrics
+app.UseHttpMetrics();     // Enregistre les temps de réponse des requêtes
+
 
 app.MapHealthChecks("/health").DisableRateLimiting();
 app.MapControllers();
