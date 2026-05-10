@@ -395,7 +395,7 @@ jobs:
       - name: Install Ansible + AWS collections
         run: |
           pip install --quiet ansible boto3 botocore
-          ansible-galaxy collection install community.aws amazon.aws --quiet
+          ansible-galaxy collection install community.aws amazon.aws
 
       # ── CONFIGURATION boto3 ──────────────────────────────────────────────────
       # Les credentials sont déjà dans les variables d'env injectées par OIDC.
