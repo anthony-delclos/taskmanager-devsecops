@@ -100,13 +100,12 @@ jobs:
 
       # Lance les tests Angular avec Chrome en mode headless (sans interface
       # graphique, compatible avec les runners GitHub Actions).
-      # --no-progress réduit le verbosité des logs dans la CI.
-      - name: Run Angular unit tests (Karma + ChromeHeadless)
+      - name: Run Angular unit tests (Vitest)
         run: |
           npm run test --prefix app/front -- \
-            --watch=false \
-            --browsers=ChromeHeadless \
-            --no-progress
+          --watch=false \
+          --reporter=verbose \
+          --coverage
 
       - name: Upload frontend coverage report
         uses: actions/upload-artifact@v4
