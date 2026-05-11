@@ -483,6 +483,8 @@ jobs:
           ANSIBLE_FORCE_COLOR: "1"
           ANSIBLE_HOST_KEY_CHECKING: "False"
           ANSIBLE_DEPRECATION_WARNINGS: "False"
+          ANSIBLE_ROLES_PATH: "${{ github.workspace }}/ansible/roles"
+          ANSIBLE_CONFIG: "${{ github.workspace }}/ansible/ansible.cfg"
         run: |
           ansible-playbook \
             -i ansible/inventory/hosts.yml \
