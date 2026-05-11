@@ -279,7 +279,6 @@ jobs:
           push: false  # On ne pousse PAS encore — Trivy doit scanner d'abord
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true  # Charge l'image dans le daemon Docker local pour Trivy
@@ -293,7 +292,6 @@ jobs:
           push: false
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
