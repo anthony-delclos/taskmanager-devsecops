@@ -87,6 +87,18 @@
     mode: "0755"
     state: file
 
+- name: Create Docker CLI plugins directory
+  ansible.builtin.file:
+    path: /usr/libexec/docker/cli-plugins
+    state: directory
+    mode: "0755"
+
+- name: Install Docker Compose as CLI plugin (enables "docker compose")
+  ansible.builtin.file:
+    src: /usr/local/bin/docker-compose
+    dest: /usr/libexec/docker/cli-plugins/docker-compose
+    state: link
+
 # ------------------------------------------------------------------
 # 5. GROUPE DOCKER
 # ------------------------------------------------------------------
