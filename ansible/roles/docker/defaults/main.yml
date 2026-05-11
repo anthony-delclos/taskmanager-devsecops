@@ -49,3 +49,10 @@ ecr_registry_url: "418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
 # 0 = désactivé (défaut pour simplifier le développement)
 # 1 = activé (recommandé en production)
 docker_content_trust: "0"
+
+# ------------------------------------------------------------------
+# DÉPLOIEMENT APPLICATIF
+# ------------------------------------------------------------------
+
+# Répertoire de déploiement sur l'instance EC2
+app_deploy_dir: "/opt/taskmanager"

@@ -161,3 +161,82 @@
 - name: Display Docker Bench Security results
   ansible.builtin.debug:
     var: docker_bench_result.stdout_lines
+
+# ------------------------------------------------------------------
+# 9. DÉPLOIEMENT APPLICATIF
+#    Copie les fichiers du repo sur l'instance, écrit le .env depuis
+#    les secrets CI, pull les images ECR et relance la stack compose.
+# ------------------------------------------------------------------
+
+- name: Create app deployment directory
+  ansible.builtin.file:
+    path: "{{ app_deploy_dir }}"
+    state: directory
+    owner: root
+    group: docker
+    mode: "0750"
+
+- name: Deploy docker-compose.yml
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../docker/docker-compose.yml"
+    dest: "{{ app_deploy_dir }}/docker-compose.yml"
+    owner: root
+    group: docker
+    mode: "0640"
+
+- name: Deploy monitoring configuration
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../monitoring/"
+    dest: "{{ app_deploy_dir }}/monitoring/"
+    owner: root
+    group: root
+    directory_mode: "0755"
+    mode: "0644"
+
+- name: Deploy .env file
+  ansible.builtin.copy:
+    src: /tmp/deploy.env
+    dest: "{{ app_deploy_dir }}/.env"
+    owner: root
+    group: docker
+    mode: "0640"
+
+- name: Pull application images from ECR
+  ansible.builtin.shell: |
+    cd {{ app_deploy_dir }}
+    docker compose pull back front
+  changed_when: true
+
+- name: Deploy application stack
+  ansible.builtin.shell: |
+    cd {{ app_deploy_dir }}
+    docker compose up -d --remove-orphans
+  changed_when: true
+  register: compose_up_result
+
+- name: Show compose deployment output
+  ansible.builtin.debug:
+    var: compose_up_result.stdout_lines
+
+- name: Wait for containers to become healthy
+  ansible.builtin.shell: |
+    cd {{ app_deploy_dir }}
+    for i in $(seq 1 12); do
+      RESTARTING=$(docker compose ps --status restarting --quiet | wc -l)
+      EXITED=$(docker compose ps --status exited --quiet | wc -l)
+      if [ "$RESTARTING" -eq 0 ] && [ "$EXITED" -eq 0 ]; then
+        echo "All containers healthy after $((i * 10))s"
+        docker compose ps
+        exit 0
+      fi
+      sleep 10
+    done
+    echo "Containers not healthy after 120s:"
+    docker compose ps
+    exit 1
+  changed_when: false
+  register: health_result
+
+- name: Show final container health status
+  ansible.builtin.debug:
+    var: health_result.stdout_lines

@@ -65,7 +65,7 @@ services:
     build:
       context: ../app/back
       dockerfile: Dockerfile
-    image: taskmanager-devsecops-back
+    image: ${BACK_IMAGE:-taskmanager-devsecops-back:latest}
     restart: unless-stopped
     depends_on:
       db:
@@ -97,7 +97,7 @@ services:
     build:
       context: ../app/front
       dockerfile: Dockerfile
-    image: taskmanager-devsecops-front
+    image: ${FRONT_IMAGE:-taskmanager-devsecops-front:latest}
     restart: unless-stopped
     depends_on:
       - back
@@ -134,7 +134,7 @@ services:
     image: prom/prometheus:latest
     restart: unless-stopped
     volumes:
-      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -151,10 +151,12 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=https://grafana.${DOMAIN}
     volumes:
       - grafana_data:/var/lib/grafana
-      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
     deploy:
@@ -162,6 +164,13 @@ services:
         limits:
           memory: 256m
           cpus: "0.5"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.http.routers.grafana.middlewares=hsts"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest

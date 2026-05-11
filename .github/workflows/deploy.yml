@@ -419,6 +419,9 @@ jobs:
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
           ECR_REGISTRY=${{ env.ECR_REGISTRY }}
           IMAGE_TAG=${{ github.sha }}
+          GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
+          BACK_IMAGE=${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}
+          FRONT_IMAGE=${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}
           EOF
 
       # ── SAUVEGARDE PRÉ-DÉPLOIEMENT (ROLLBACK POINT) ──────────────────────────
@@ -578,6 +581,9 @@ jobs:
           [ "$ROLLBACK_TAG" = "none" ] && echo "No previous version found" && exit 1
           docker compose down --timeout 30 || true
           sed -i "s/IMAGE_TAG=.*/IMAGE_TAG=$ROLLBACK_TAG/" .env
+          ECR=$(grep '^ECR_REGISTRY=' .env | cut -d= -f2)
+          sed -i "s|BACK_IMAGE=.*|BACK_IMAGE=$ECR/taskmanager-devsecops-back:$ROLLBACK_TAG|" .env
+          sed -i "s|FRONT_IMAGE=.*|FRONT_IMAGE=$ECR/taskmanager-devsecops-front:$ROLLBACK_TAG|" .env
           docker compose pull
           docker compose up -d
           sleep 20
