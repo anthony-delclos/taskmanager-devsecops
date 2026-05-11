@@ -111,6 +111,7 @@ jobs:
           name: frontend-coverage
           path: app/front/coverage
           retention-days: 7
+          if-no-files-found: ignore
 
 # ==============================================================================
 # JOB 2 — SAST (SEMGREP)
@@ -165,7 +166,7 @@ jobs:
       # Les vulnérabilités apparaissent dans Sécurité > Analyse du code
       # avec leur fichier source, ligne, sévérité et description.
       - name: Upload Semgrep SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         if: always()  # Upload même si Semgrep a trouvé des problèmes
         with:
           sarif_file: semgrep.sarif
@@ -207,7 +208,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Gitleaks SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('results.sarif') != ''
         with:
           sarif_file: results.sarif
@@ -270,7 +271,6 @@ jobs:
 
       # ── BUILD BACKEND ──────────────────────────────────────────────────────
       # Double tag : SHA du commit (immuable, pour rollback précis)
-      #              + "latest" (pratique pour Ansible qui tirera toujours latest)
       - name: Build backend Docker image
         uses: docker/build-push-action@v5
         with:
@@ -313,7 +313,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Upload Trivy backend results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: trivy-back.sarif
@@ -330,7 +330,7 @@ jobs:
           severity: HIGH,CRITICAL
 
       - name: Upload Trivy frontend results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: trivy-front.sarif
@@ -342,13 +342,11 @@ jobs:
         if: github.ref == 'refs/heads/main'  # push ECR uniquement sur main
         run: |
           docker push ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest
 
       - name: Push frontend image to ECR
         if: github.ref == 'refs/heads/main'  # push ECR uniquement sur main
         run: |
           docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest
 
   # ============================================================================
   # JOB 5 — DEPLOY VIA ANSIBLE + AWS SSM
@@ -419,6 +417,8 @@ jobs:
           DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
           DOMAIN=${{ secrets.DOMAIN }}
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
+          ECR_REGISTRY=${{ env.ECR_REGISTRY }}
+          IMAGE_TAG=${{ github.sha }}
           EOF
 
       # ── SAUVEGARDE PRÉ-DÉPLOIEMENT (ROLLBACK POINT) ──────────────────────────
@@ -432,16 +432,17 @@ jobs:
         id: save-rollback
         run: |
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:rollback 2>/dev/null || true",
-              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:rollback 2>/dev/null || true",
-              "echo ROLLBACK_SAVED=OK"
-            ]' \
-            --region ${{ env.AWS_REGION }} \
-            --query "Command.CommandId" \
-            --output text)
+          --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=[
+            "cd /opt/taskmanager",
+            "CURRENT_TAG=$(grep IMAGE_TAG .env 2>/dev/null | cut -d= -f2 || echo none)",
+            "echo $CURRENT_TAG > /opt/taskmanager/.rollback_tag",
+            "echo ROLLBACK_SAVED=$CURRENT_TAG"
+          ]' \
+          --region ${{ env.AWS_REGION }} \
+          --query "Command.CommandId" \
+          --output text)
 
           echo "Rollback save command ID: $COMMAND_ID"
 
@@ -460,6 +461,11 @@ jobs:
 
           echo "Rollback save status: $STATUS"
           echo "rollback_command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "::error::Failed to save rollback point — aborting pipeline"
+            exit 1
+          fi
 
       # ── DÉPLOIEMENT ANSIBLE ──────────────────────────────────────────────────
       # Lance le playbook avec --tags docker uniquement.
@@ -504,7 +510,12 @@ jobs:
             --parameters 'commands=[
               "sleep 40",
               "cd /opt/taskmanager",
-              "docker compose ps --format json | python3 -c \"import sys,json; services=json.load(sys.stdin) if isinstance(json.load(open(0)),list) else [json.load(open(0))]; bad=[s[\\\"Name\\\"] for s in services if s[\\\"State\\\"] != \\\"running\\\"]; sys.exit(1) if bad else print(\\\"All services healthy:\\\", [s[\\\"Name\\\"] for s in services])\" 2>/dev/null || docker compose ps | grep -v Up && exit 1 || exit 0"
+              "RESTARTING=$(docker compose ps --status restarting --quiet | wc -l)",
+              "EXITED=$(docker compose ps --status exited --quiet | wc -l)",
+              "echo Restarting: $RESTARTING - Exited: $EXITED",
+              "docker compose ps",
+              "if [ $RESTARTING -gt 0 ] || [ $EXITED -gt 0 ]; then echo Unhealthy containers; exit 1; fi",
+              "echo All containers healthy"
             ]' \
             --region ${{ env.AWS_REGION }} \
             --query "Command.CommandId" \
@@ -555,21 +566,32 @@ jobs:
       - name: ROLLBACK — Restore previous version on failure
         if: failure() && steps.save-rollback.outcome == 'success'
         run: |
-          echo "::warning::Deployment failed — initiating automatic rollback"
+          # Upload du script sur S3 (bucket déjà utilisé pour tfstate)
+          cat > /tmp/rollback.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          cd /opt/taskmanager
+          ROLLBACK_TAG=$(cat .rollback_tag 2>/dev/null || echo none)
+          echo "Rollback target SHA: $ROLLBACK_TAG"
+          [ "$ROLLBACK_TAG" = "none" ] && echo "No previous version found" && exit 1
+          docker compose down --timeout 30 || true
+          sed -i "s/IMAGE_TAG=.*/IMAGE_TAG=$ROLLBACK_TAG/" .env
+          docker compose pull
+          docker compose up -d
+          sleep 20
+          docker compose ps
+          echo "=== ROLLBACK COMPLETED ==="
+          SCRIPT
+
+          aws s3 cp /tmp/rollback.sh s3://devsecops-tfstate-ajele/scripts/rollback.sh
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --parameters 'commands=[
-              "echo === ROLLBACK INITIATED ===",
-              "cd /opt/taskmanager",
-              "docker compose down --timeout 30 || true",
-              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:rollback ${{ env.ECR_REGISTRY }}/${{ env.BACK_IMAGE_NAME }}:latest",
-              "docker tag ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:rollback ${{ env.ECR_REGISTRY }}/${{ env.FRONT_IMAGE_NAME }}:latest",
-              "docker compose up -d",
-              "sleep 20",
-              "docker compose ps",
-              "echo === ROLLBACK COMPLETED ==="
+              "aws s3 cp s3://devsecops-tfstate-ajele/scripts/rollback.sh /tmp/rollback.sh",
+              "chmod +x /tmp/rollback.sh",
+              "bash /tmp/rollback.sh"
             ]' \
             --region ${{ env.AWS_REGION }} \
             --query "Command.CommandId" \
@@ -577,7 +599,6 @@ jobs:
 
           echo "Rollback command ID: $COMMAND_ID"
 
-          # Attend max 3 minutes pour le rollback
           aws ssm wait command-executed \
             --command-id "$COMMAND_ID" \
             --instance-id "${{ env.EC2_INSTANCE_ID }}" \
