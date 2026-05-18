@@ -24,7 +24,7 @@ env:
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-3.amazonaws.com
   BACK_IMAGE_NAME: taskmanager-devsecops-back
   FRONT_IMAGE_NAME: taskmanager-devsecops-front
-  EC2_INSTANCE_ID: i-04505dbb91806e12a
+  EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
 
 # ==============================================================================
 # JOB 1 — TESTS UNITAIRES
@@ -591,13 +591,13 @@ jobs:
           echo "=== ROLLBACK COMPLETED ==="
           SCRIPT
 
-          aws s3 cp /tmp/rollback.sh s3://devsecops-tfstate-ajele/scripts/rollback.sh
+          aws s3 cp /tmp/rollback.sh s3://${{ secrets.TERRAFORM_STATE_BUCKET }}/scripts/rollback.sh
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --parameters 'commands=[
-              "aws s3 cp s3://devsecops-tfstate-ajele/scripts/rollback.sh /tmp/rollback.sh",
+              "aws s3 cp s3://${{ secrets.TERRAFORM_STATE_BUCKET }}/scripts/rollback.sh /tmp/rollback.sh",
               "chmod +x /tmp/rollback.sh",
               "bash /tmp/rollback.sh"
             ]' \

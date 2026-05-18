@@ -163,6 +163,6 @@
     msg: >
       SELinux mode changed — un reboot de l'instance est nécessaire
       pour appliquer le mode '{{ security_selinux_state }}' complètement.
-      Commande : aws ssm start-session --target i-04505dbb91806e12a
+      Commande : aws ssm start-session --target <YOUR_INSTANCE_ID>
       puis : sudo reboot
   when: selinux_result.reboot_required | default(false)

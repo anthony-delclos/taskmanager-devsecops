@@ -25,8 +25,7 @@ ansible/
 
 - Ansible >= 2.14
 - Python >= 3.9
-- Clé SSH `~/.ssh/id_rsa` correspondant à la paire déployée sur l'instance EC2
-- Instance EC2 Amazon Linux 2023 accessible (port 22 ouvert pour votre IP)
+- Instance EC2 Amazon Linux 2023 accessible via SSM Session Manager
 - Mot de passe Vault dans `~/.vault_pass` (non commité)
 
 Installer les dépendances Python :
@@ -47,7 +46,7 @@ ansible ec2 -m ping
 Résultat attendu :
 
 ```
-13.39.25.165 | SUCCESS => { "ping": "pong" }
+<YOUR_INSTANCE_IP> | SUCCESS => { "ping": "pong" }
 ```
 
 ### 2. Vérifier la syntaxe du playbook
