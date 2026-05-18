@@ -4,11 +4,10 @@
 
 | | |
 |---|---|
-| Responsable infrastructure | Gomez |
+| Cloud provider | AWS (eu-west-3 - Paris) |
 | Cloud provider | AWS (eu-west-3 - Paris) |
 | Accès console | SSM Session Manager (sans SSH) |
 | IaC | Terraform >= 1.10 + backend S3 |
-| Instance | i-04505dbb91806e12a |
 
 ---
 
@@ -30,12 +29,12 @@ Internet  (HTTP port 80 / HTTPS port 443)
   - port 443 : ouvert (0.0.0.0/0)
        |
        v
-[ EC2 Instance - Amazon Linux 2023 ]  id: i-04505dbb91806e12a
+[ EC2 Instance - Amazon Linux 2023 ]  id: i-xxxxxxxxxxxxxxxxx
   - IAM Role          : devsecops-ssm-role
   - EBS 32 Go gp3     : chiffré AES-256
   - IMDSv2            : obligatoire
   - Docker 25.0.6     : installé via Ansible
-  - ECR               : 418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager
+  - ECR               : <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/taskmanager
        ^
        |  (canal SSM chiffré TLS, aucun port ouvert)
 [ SSM Session Manager - AWS API ]
@@ -48,11 +47,11 @@ Internet  (HTTP port 80 / HTTPS port 443)
 
 | Composant | Identifiant AWS | Rôle |
 |-----------|----------------|------|
-| EC2 Instance | i-04505dbb91806e12a | Serveur applicatif principal |
-| Security Group | sg-0dc679e5c4997802d | Contrôle du trafic réseau |
+| EC2 Instance | i-xxxxxxxxxxxxxxxxx | Serveur applicatif principal |
+| Security Group | (voir `terraform output security_group_id`) | Contrôle du trafic réseau |
 | IAM Role | devsecops-ssm-role | Identité de l'instance pour SSM + ECR + S3 |
 | IAM Instance Profile | devsecops-ssm-profile | Pont entre le rôle IAM et l'EC2 |
-| S3 Bucket | devsecops-tfstate-ajele | State Terraform + fichiers temporaires Ansible SSM |
+| S3 Bucket | your-terraform-state-bucket | State Terraform + fichiers temporaires Ansible SSM |
 | ECR Repository | taskmanager | Registre Docker des images applicatives |
 
 > La table DynamoDB `terraform-lock` n'est plus utilisée. Le verrouillage du state est géré nativement par S3 via `use_lockfile = true` (Terraform >= 1.10).
@@ -131,7 +130,7 @@ Si l'accès avait été configuré via SSH, voici ce qui aurait été nécessair
 
 ## 4. Guide de connexion pour les collaborateurs
 
-Ce guide s'adresse à Erwin, Leo, Anthony et Esteban. Suivez les étapes dans l'ordre. L'installation ne se fait qu'une seule fois.
+Ce guide s'adresse aux membres de l'équipe. Suivez les étapes dans l'ordre. L'installation ne se fait qu'une seule fois.
 
 ### 4.1 Installation des prérequis (une seule fois)
 
@@ -202,7 +201,7 @@ Vous verrez un bloc du type :
 [profile mon-profil-sso]
 sso_start_url = https://...
 sso_region    = eu-west-3
-sso_account_id = 418295718544
+sso_account_id = <YOUR_AWS_ACCOUNT_ID>
 sso_role_name  = PowerUserAccess
 ```
 
@@ -220,7 +219,7 @@ Une fois les prérequis installés, la connexion se fait avec une seule commande
 
 ```bash
 aws ssm start-session \
-  --target i-04505dbb91806e12a \
+  --target i-xxxxxxxxxxxxxxxxx \
   --region eu-west-3 \
   --profile <votre-profil-sso>
 ```
@@ -272,12 +271,10 @@ La session est automatiquement fermée et l'événement est enregistré dans Clo
 
 | Information | Valeur |
 |-------------|--------|
-| Instance ID | i-04505dbb91806e12a |
+| Instance ID | `terraform output instance_id` |
 | Région AWS | eu-west-3 (Paris) |
-| IP privée | 172.31.41.224 |
-| Security Group | sg-0dc679e5c4997802d |
-| S3 State bucket | devsecops-tfstate-ajele |
-| ECR URL | 418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager |
+| S3 State bucket | your-terraform-state-bucket |
+| ECR URL | `terraform output ecr_repository_url` |
 | Profil AWS CLI | Votre propre profil SSO (voir `~/.aws/config`) |
 
 > En cas de problème de connexion, vérifiez en premier lieu que le plugin SSM est bien installé (`session-manager-plugin --version`) et que votre profil est correctement configuré (`aws configure list --profile <votre-profil-sso>`).
@@ -292,7 +289,7 @@ La session est automatiquement fermée et l'événement est enregistré dans Clo
 cd terraform
 
 # Authentification SSO (si session expirée)
-aws sso login --profile devesecops_project_final_ajele
+aws sso login --profile your-aws-sso-profile
 
 # Initialiser (uniquement si backend ou providers changés)
 terraform init -reconfigure

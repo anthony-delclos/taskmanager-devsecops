@@ -39,7 +39,7 @@ aws_region: "eu-west-3"
 #   2. Passer la valeur en extra-var lors du run :
 #      ansible-playbook deploy.yml -e "ecr_registry_url=123456789.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
 # URL issue de : terraform output ecr_repository_url
-ecr_registry_url: "418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
+ecr_registry_url: "<YOUR_AWS_ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/taskmanager"
 
 # ------------------------------------------------------------------
 # DOCKER CONTENT TRUST

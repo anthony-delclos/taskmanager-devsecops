@@ -615,7 +615,7 @@ DB_PASSWORD=<mot_de_passe_fort>
 DB_ROOT_PASSWORD=<mot_de_passe_root_fort>
 
 # Domaine public (utilisé par Traefik pour Let's Encrypt + CORS backend)
-DOMAIN=<ip-formatée>.sslip.io   # ex : 13-38-90-39.sslip.io
+DOMAIN=<ip-formatée>.sslip.io   # ex : <IP>.sslip.io
 
 # Email pour les notifications Let's Encrypt
 ACME_EMAIL=<email>
@@ -694,7 +694,7 @@ labels:
 
 | Champ    | Valeur                            |
 | -------- | --------------------------------- |
-| Domaine  | `13-38-90-39.sslip.io`            |
+| Domaine  | `<IP>.sslip.io`            |
 | Émetteur | Let's Encrypt — CN=R13            |
 | Validité | 1 mai 2026 → 30 juillet 2026      |
 | Stockage | Volume Docker `letsencrypt`       |
@@ -702,7 +702,7 @@ labels:
 
 ### Domaine sslip.io
 
-`sslip.io` est un service DNS gratuit qui résout automatiquement un sous-domaine vers l'adresse IP encodée dans le nom. Ex : `13-38-90-39.sslip.io` → `13.38.90.39`. Aucun compte requis. Utilisé pour obtenir un FQDN valide pour Let's Encrypt sans acheter de domaine.
+`sslip.io` est un service DNS gratuit qui résout automatiquement un sous-domaine vers l'adresse IP encodée dans le nom. Ex : `<IP>.sslip.io` → `<IP>`. Aucun compte requis. Utilisé pour obtenir un FQDN valide pour Let's Encrypt sans acheter de domaine.
 
 ---
 
@@ -824,7 +824,7 @@ Vérifications réalisées le 1er mai 2026 après déploiement complet.
 | **TLS 1.0 / 1.1**             | Rejetés par Traefik (alert protocol version 70)                     |
 | **CORS production**            | `Cors__AllowedOrigins: https://${DOMAIN}` (restreint au domaine)    |
 | **ASPNETCORE_ENVIRONMENT**     | `Production` — Swagger désactivé, stack traces masquées             |
-| **Domaine**                    | `13-38-90-39.sslip.io` (sslip.io — DNS libre, sans compte)         |
+| **Domaine**                    | `<IP>.sslip.io` (sslip.io — DNS libre, sans compte)         |
 
 ### ✅ AWS / Infrastructure sécurisée
 
