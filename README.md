@@ -47,7 +47,7 @@ ansible ec2 -m ping
 Résultat attendu :
 
 ```
-13.39.25.165 | SUCCESS => { "ping": "pong" }
+<YOUR_INSTANCE_IP> | SUCCESS => { "ping": "pong" }
 ```
 
 ### 2. Vérifier la syntaxe du playbook

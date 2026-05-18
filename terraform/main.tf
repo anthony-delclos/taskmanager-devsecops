@@ -1,6 +1,6 @@
 # ============================================================
 # PROJET FINAL DEVSECOPS - INFRASTRUCTURE AWS
-# Auteur : Gomez (Infrastructure)
+
 # ============================================================
 
 terraform {
@@ -15,11 +15,11 @@ terraform {
   }
 
   backend "s3" {
-    bucket  = "devsecops-tfstate-ajele"
+    bucket  = "your-terraform-state-bucket"
     key     = "projet-final/terraform.tfstate"
     region  = "eu-west-3"
     encrypt = true
-    profile = "devesecops_project_final_ajele"
+    profile = "your-aws-sso-profile"
 
     # Remplace dynamodb_table (déprécié depuis Terraform 1.10).
     # Utilise un fichier .tflock dans S3 au lieu d'une table DynamoDB.
@@ -135,7 +135,7 @@ resource "aws_iam_role_policy_attachment" "ecr_policy" {
 # couvrant le besoin read+write S3.
 #
 # En production : remplacer par une policy inline créée par un admin
-# avec droits IAM, restreinte au bucket devsecops-tfstate-ajele/ansible-ssm-tmp/*
+# avec droits IAM, restreinte au bucket your-terraform-state-bucket/ansible-ssm-tmp/*
 resource "aws_iam_role_policy_attachment" "s3_ssm_ansible" {
   role       = aws_iam_role.ssm_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"

@@ -4,12 +4,9 @@
 
 | | |
 |---|---|
-| Responsable Ansible | Gomez |
 | Transport | AWS SSM Session Manager (sans SSH) |
 | OS cible | Amazon Linux 2023 |
-| Instance EC2 | i-04505dbb91806e12a |
 | Région AWS | eu-west-3 (Paris) |
-| Date de rédaction | Avril 2026 |
 
 ---
 
@@ -55,7 +52,7 @@ Nœud de contrôle (machine locale)
           |
           | (canal SSM chiffré TLS — aucun port 22)
           v
-    EC2 i-04505dbb91806e12a (Amazon Linux 2023)
+    EC2 i-xxxxxxxxxxxxxxxxx (Amazon Linux 2023)
           |
           |-- Rôle security : updates, SSH, auditd, SELinux
           |-- Rôle docker   : Docker, daemon.json, Compose, ECR, Bench
@@ -132,15 +129,15 @@ pip install boto3 botocore
 #         session-manager-working-with-install-plugin.html
 
 # 4. Profil AWS configuré
-aws configure --profile devesecops_project_final_ajele
+aws configure --profile your-aws-sso-profile
 # ou via SSO :
-aws sso login --profile devesecops_project_final_ajele
+aws sso login --profile your-aws-sso-profile
 ```
 
 ### 3.4 Fichier temporaire via S3
 
 Le plugin SSM utilise un bucket S3 comme canal de transfert de fichiers temporaires entre le nœud de contrôle et l'instance EC2. C'est pourquoi :
-- Le bucket `devsecops-tfstate-ajele` est utilisé avec le préfixe `ansible-ssm-tmp/`
+- Le bucket `your-terraform-state-bucket` est utilisé avec le préfixe `ansible-ssm-tmp/`
 - L'instance EC2 dispose de la policy `AmazonS3FullAccess` dans son rôle IAM
 
 > En production : restreindre à une policy personnalisée limitée au seul préfixe `ansible-ssm-tmp/*` du bucket.
@@ -216,13 +213,13 @@ all:
   children:
     ec2:
       hosts:
-        i-04505dbb91806e12a:
+        i-xxxxxxxxxxxxxxxxx:
       vars:
         ansible_connection: community.aws.aws_ssm
-        ansible_aws_ssm_instance_id: "i-04505dbb91806e12a"
+        ansible_aws_ssm_instance_id: "i-xxxxxxxxxxxxxxxxx"
         ansible_aws_ssm_region: "eu-west-3"
-        ansible_aws_ssm_profile: "devesecops_project_final_ajele"
-        ansible_aws_ssm_bucket_name: "devsecops-tfstate-ajele"
+        ansible_aws_ssm_profile: "your-aws-sso-profile"
+        ansible_aws_ssm_bucket_name: "your-terraform-state-bucket"
         ansible_aws_ssm_bucket_prefix: "ansible-ssm-tmp"
         ansible_aws_ssm_timeout: 60
         ansible_python_interpreter: /usr/bin/python3
@@ -231,7 +228,7 @@ all:
 
 ### Décision importante : ID d'instance, pas adresse IP
 
-L'inventaire cible l'instance par son **ID AWS** (`i-04505dbb91806e12a`), pas par son IP. C'est obligatoire pour le transport SSM : le plugin a besoin de l'ID pour ouvrir la session via l'API AWS, pas d'une adresse réseau. Une IP privée changerait après un arrêt/redémarrage de l'instance ; l'ID, lui, est permanent.
+L'inventaire cible l'instance par son **ID AWS** (`i-xxxxxxxxxxxxxxxxx`), pas par son IP. C'est obligatoire pour le transport SSM : le plugin a besoin de l'ID pour ouvrir la session via l'API AWS, pas d'une adresse réseau. Une IP privée changerait après un arrêt/redémarrage de l'instance ; l'ID, lui, est permanent.
 
 ---
 
@@ -444,7 +441,7 @@ Le résultat est affiché dans les logs Ansible via la tâche `Display Docker Be
 | `docker_compose_version` | `"2.27.0"` | Version du binaire Docker Compose téléchargé |
 | `docker_user` | `"ec2-user"` | Utilisateur ajouté au groupe docker |
 | `aws_region` | `"eu-west-3"` | Région AWS pour ECR et SSM |
-| `ecr_registry_url` | `418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager` | URL complète du registre ECR |
+| `ecr_registry_url` | `<YOUR_AWS_ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/taskmanager` | URL complète du registre ECR |
 | `docker_content_trust` | `"0"` | DCT désactivé (dev) — passer à `"1"` en production |
 
 ---
@@ -560,11 +557,11 @@ L'instance est prête mais **aucun conteneur applicatif ne tourne** (`No contain
    ```bash
    aws ecr get-login-password --region eu-west-3 --profile <profil> \
      | docker login --username AWS --password-stdin \
-       418295718544.dkr.ecr.eu-west-3.amazonaws.com
+       <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com
    
    docker build -t taskmanager .
-   docker tag taskmanager:latest 418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager:latest
-   docker push 418295718544.dkr.ecr.eu-west-3.amazonaws.com/taskmanager:latest
+   docker tag taskmanager:latest <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/taskmanager:latest
+   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.eu-west-3.amazonaws.com/taskmanager:latest
    ```
 3. **Créer un `docker-compose.yml`** pour l'application
 4. **Ajouter une tâche Ansible** dans le rôle docker pour déployer via `docker compose up`
@@ -619,7 +616,7 @@ ansible-vault edit inventory/group_vars/vault.yml --vault-password-file ~/.vault
 Chaque collaborateur doit avoir configuré sur sa machine :
 - AWS CLI installé
 - Plugin SSM Session Manager installé
-- Profil SSO AWS configuré avec accès au compte `418295718544`
+- Profil SSO AWS configuré avec accès au compte `<YOUR_AWS_ACCOUNT_ID>`
 - Session SSO active : `aws sso login --profile <son-profil>`
 
 ---
@@ -697,9 +694,9 @@ ansible ec2 -m shell -a "groups ec2-user"
 
 ```bash
 aws ssm start-session \
-  --target i-04505dbb91806e12a \
+  --target i-xxxxxxxxxxxxxxxxx \
   --region eu-west-3 \
-  --profile devesecops_project_final_ajele
+  --profile your-aws-sso-profile
 ```
 
 ---
